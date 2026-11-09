@@ -56,27 +56,40 @@ The menu opens only offline (as the clones fight), with your fighter alive and t
 over the pause menu, not in a Steam lobby. It closes by itself when you die, when the HUD goes (a level change), or when you join a
 lobby.
 
-## Record, train, share, fight
+## Record, share, fight
 
-1. **Record.** Set `record=1` and fight. Only play near a living foe is kept. Nothing is kept while in a Steam lobby or while
-   fighting a clone.
-2. **Train.** Run the trainer on the file. It needs no GPU, no network and no installs. It runs at low priority outside the game, uses
-   half your CPU threads (at most 8) and stops inside 4.5 minutes, however long the recording is.
+**The main, most tested way to use Fetch is without training:** record, then fight the recording. The clone replays real moments of
+the recorded player's input, the ones that best fit the fight it is in.
 
-   ```
-   clonetrain Clones/Ana.hsmclone
-   ```
+1. **Record.** Set `record=1` (or "Record my fighting" in the menu) and fight. Only play near a living foe is kept. Nothing is kept
+   while in a Steam lobby or while fighting a clone.
+2. **Share.** Send the `.hsmclone` from `Clones/`. It grows with play, about 22 MB an hour. It holds the name, the last kit fought in,
+   and the recording. The mod uploads nothing.
+3. **Fight.** Put the file in `Clones/`, set `clone=Ana` (or pick it in the menu's "Clone to fight"), and start an offline fight.
+   If a `.hsmmodel` of the same name is there too, `brain=auto` uses the model: set `brain=replay` to stay with the recording.
 
-   This writes `Clones/Ana.hsmmodel` beside it. `--threads N` and `--minutes M` change the limits, and `--outcome X` how much
-   hits landed and taken weigh a move (below).
+### Optional: train a model
 
-   Or double-click `train.bat`, kept next to `clonetrain.exe` and `dsound.dll`. It lists the recordings in `Clones/`, with
-   their size and whether each has a model yet, and asks which to train (or all of them), the time limit, the weight of results
-   and the CPU threads; Enter keeps the usual setting. An old model is kept as `NAME.hsmmodel.bak`, and stays as it was if
-   training fails.
-3. **Share.** Send the `.hsmmodel`, about 6 MB however long you played. It holds the model, the name, the last kit fought in, and a
-   bank of short real clips of your input. The mod uploads nothing.
-4. **Fight.** Put the file in `Clones/`, set `clone=Ana`, and start an offline fight.
+A model has been tested less in game than replay. It plays the same kind of real clips, but a small neural network picks them, and
+the file is about 6 MB however long you played, so it is handier to share. It holds the model, the name, the last kit fought in, and
+a bank of short real clips of your input.
+
+Run the trainer on the file. It needs no GPU, no network and no installs. It runs at low priority outside the game, uses
+half your CPU threads (at most 8) and stops inside 4.5 minutes, however long the recording is.
+
+```
+clonetrain Clones/Ana.hsmclone
+```
+
+This writes `Clones/Ana.hsmmodel` beside it. `--threads N` and `--minutes M` change the limits, and `--outcome X` how much
+hits landed and taken weigh a move (below).
+
+Or double-click `train.bat`, kept next to `clonetrain.exe` and `dsound.dll`. It lists the recordings in `Clones/`, with
+their size and whether each has a model yet, and asks which to train (or all of them), the time limit, the weight of results
+and the CPU threads; Enter keeps the usual setting. An old model is kept as `NAME.hsmmodel.bak`, and stays as it was if
+training fails.
+
+Share the `.hsmmodel` as you would the `.hsmclone`, and fight it the same way.
 
 With `clone_weapon=` set to anything but `kit`, the clone is handed a weapon of that type half a second after it comes in, built by
 the game's own weapon generator. `random` and `match` only pick a type it has moves for: in a model, a type it was trained on; in a

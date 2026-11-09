@@ -1,19 +1,92 @@
 # Fetch
 
-Fetch is a mod for Half Sword that lets you record how you fight, train a small model from it, share one file, and fight that
-style offline. It is a mod of its own (`dsound.dll`): it needs no other mod and works beside HSMMod.
+Fetch is a mod for Half Sword that records how you fight and lets you, or anyone you send the file to, fight that style offline as
+a clone. It is a mod of its own (`dsound.dll`): it needs no other mod, and works beside HSMMod.
 
-- **Record** your fighting, or play a **training session** that walks you through every weapon type against every kind of foe.
-- **Train** with `train.bat` or `clonetrain`: no GPU, no network, under 5 minutes.
-- **Fight** any clone in `Clones/`, offline. It plays real clips of the recorded player's input, picked by the model.
+**The main, most tested way to use it is without training:** record, then fight the recording. Training a model is optional (see
+[below](#optional-train-a-model)).
 
-Download the latest release from [Releases](https://github.com/Dudiebug/Fetch/releases). How it all works, every setting and
-what has been measured: [docs/CLONE.md](docs/CLONE.md). The in-game checks still to be done: [docs/HUMAN_TESTING.md](docs/HUMAN_TESTING.md).
+## 1. Install
 
-## Install
+1. Download `dsound.dll` from the latest [release](https://github.com/Dudiebug/Fetch/releases).
+2. Put it in the game's `HalfswordUE5/Binaries/Win64` folder, next to `HalfswordUE5-Win64-Shipping.exe`.
+   - Steam: right-click Half Sword, **Manage → Browse local files**, then open `HalfswordUE5/Binaries/Win64`.
+   - On Linux (Proton), also set the game's launch options to `WINEDLLOVERRIDES="dsound=n,b" %command%`.
+3. Start the game from Steam, with Steam running.
 
-Copy `dsound.dll` next to the game exe (`HalfswordUE5/Binaries/Win64`), with `clonetrain.exe` and `train.bat` beside it. Start the
-game from Steam. On Proton, add `WINEDLLOVERRIDES="dsound=n,b" %command%` to the launch options. Press `;` in a fight for the menu.
+The first start writes `Fetch.ini` and `Fetch.log` in that same folder, and a `Clones` folder appears there when you record. Fetch
+does nothing until you turn something on.
+
+## 2. Record yourself
+
+1. Start an offline fight (Free Mode, or any fight level).
+2. Press `;` (the key right of L on a US keyboard). The Fetch menu opens.
+3. On **Record my fighting**, press D so it says ON. Press `;` to close the menu.
+4. Fight. Only play near a living foe is kept, so walking around menus or an empty arena adds nothing.
+
+Your fighting goes into `Clones/<your Steam name>.hsmclone`, about 22 MB an hour, and every later session adds to the same file. The
+more you fight, and the more weapons and foes you fight with, the better the clone. A **training session** (in the same menu) walks
+you through every weapon type against every kind of foe for you; see [docs/CLONE.md](docs/CLONE.md#training-sessions).
+
+Recording pauses while you fight a clone, and in a Steam lobby.
+
+## 3. Fight a clone
+
+1. Make sure the `.hsmclone` you want is in the `Clones` folder: your own, or one someone sent you.
+2. In an offline fight, open the menu with `;`, go to **Clone to fight**, and press D until it shows that name.
+3. Close the menu. About 3 s later the clone appears 5 m ahead of you, facing you, and Free Mode's own fighters leave. When you
+   beat it, another comes.
+
+The clone plays back real moments of the recorded player's input, picked to fit what is happening in your fight. It wears the kit the
+player last recorded in.
+
+If there is also a `.hsmmodel` of the same name, the clone uses that instead. To stay with the recording, set **Clone brain** to
+`replay` in the menu.
+
+## 4. Share
+
+Send the `.hsmclone` file from your `Clones` folder. The other player puts it in their own `Clones` folder and picks it as in step 3.
+Fetch uploads nothing itself.
+
+## The menu (`;`)
+
+W/S or the arrow keys choose a row, A/D change it, Enter runs it, and `;` or Esc closes the menu. It opens only offline, in a fight,
+with your fighter alive. Every change is saved to `Fetch.ini`.
+
+| Row | What it does |
+|---|---|
+| Record my fighting | Recording on or off. |
+| Clone to fight | Which clone from `Clones/` joins your fights, or none. |
+| Clone brain | `auto`, `model` or `replay`. |
+| Clone's weapon | Its own kit, a random weapon type, the same type as yours, or one type. |
+| One on one | Whether Free Mode's own fighters leave while a clone is in. |
+| Bring the clone back | The clone leaves, and a new one comes. |
+| Training session | Starts a guided session (Free Mode only): every weapon against every kind of foe, or what your recording lacks. |
+| Session length | 5 to 60 minutes. |
+
+All the settings are also in `Fetch.ini`, explained in [docs/CLONE.md](docs/CLONE.md).
+
+## Optional: train a model
+
+A recording grows with play. A trained model is a fixed 6 MB however long you played, which is handier to share, and it plays the
+same real clips but picks them with a small neural network. This way has been tested less in game.
+
+Put `clonetrain.exe` and `train.bat` from the release next to `dsound.dll`, double-click `train.bat`, pick your recording, and
+press Enter at each question. In under 5 minutes it writes `Clones/<name>.hsmmodel`, which the clone then uses. It needs no GPU and
+no network. The release's `all.hsmmodel` is a ready-made one to try.
+
+## If something is wrong
+
+- **No clone appears:** check it is an offline fight (not a Steam lobby), and that **Clone to fight** shows a name.
+- **The menu does not open:** it needs an offline fight with your fighter alive and the game's HUD showing.
+- Anything else: look in `Fetch.log`, and send it with your report.
+
+To remove Fetch, delete `dsound.dll` (and `Fetch.ini`, `Fetch.log` and `Clones` if you want).
+
+## More
+
+- [docs/CLONE.md](docs/CLONE.md): how it works, every setting, and what has been measured.
+- [docs/HUMAN_TESTING.md](docs/HUMAN_TESTING.md): the in-game checks.
 
 ## Build
 
