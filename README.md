@@ -1,7 +1,11 @@
 # Fetch
 
 Fetch is a mod for Half Sword that records how you fight and lets you, or anyone you send the file to, fight that style offline as
-a clone. It is a mod of its own (`dsound.dll`): it needs no other mod, and works beside HSMMod.
+a clone. It is a mod of its own (`dsound.dll`) and needs no other mod.
+
+**Fetch and HSMMod don't mix.** HSMMod treats `dsound.dll` as another mod and won't let you play multiplayer while it is there.
+Take `dsound.dll` out of the game folder (or rename it, say to `dsound.dll.off`) before you play HSMMod, and put it back to use
+Fetch.
 
 **The main, most tested way to use it is without training:** record, then fight the recording. Training a model is optional (see
 [below](#optional-train-a-model)).
@@ -78,6 +82,7 @@ no network. The release's `all.hsmmodel` is a ready-made one to try.
 ## If something is wrong
 
 - **No clone appears:** check it is an offline fight (not a Steam lobby), and that **Clone to fight** shows a name.
+- **HSMMod won't let you play:** that is Fetch's `dsound.dll`. Take it out of the game folder while you play HSMMod.
 - **The menu does not open:** it needs an offline fight with your fighter alive and the game's HUD showing.
 - Anything else: look in `Fetch.log`, and send it with your report.
 
