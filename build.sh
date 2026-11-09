@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cross-compiles Fetch as dsound.dll (a load-time import of the game exe) with llvm-mingw, and the clonetrain program.
-# Usage: ./build.sh [Release|Debug]   Output: build/dsound.dll, build/clonetrain(.exe)
+# Usage: ./build.sh [Release|Debug]   Output: build/dsound.dll, build/clonetrain.exe
 set -euo pipefail
 cd "$(dirname "$0")"
 TC=${LLVM_MINGW:-$HOME/.local/opt/llvm-mingw-20260922-ucrt-ubuntu-22.04-x86_64}
@@ -11,7 +11,7 @@ OPT=$([ "$CFG" = Debug ] && echo "-O0 -g" || echo "-O2")
 mkdir -p build/obj
 
 COMMON="$OPT -Wall -Wextra -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -fstack-protector-strong"
-INC="-Isrc -I../../shared -I../../shared/protocol -Ithird_party/minhook/include"
+INC="-Isrc -Ishared -Ishared/protocol -Ithird_party/minhook/include"
 JOBS=${BUILD_JOBS:-$(( ($(nproc 2>/dev/null || echo 2) + 1) / 2 ))}
 
 objs=()
@@ -42,5 +42,5 @@ if "$CXX" -c -x c++ /dev/null -o /dev/null -mguard=cf 2>/dev/null; then
   echo 1 > build/guard_cf
 fi
 "$CXX" -shared -o build/dsound.dll "${objs[@]}" src/dsound.def $LINK_FLAGS -static -static-libgcc -static-libstdc++ -Wl,--kill-at -lws2_32 -lwinmm
-"$CXX" -std=c++20 -O2 -D_USE_MATH_DEFINES -I../../shared -I../../shared/protocol -static -static-libgcc -static-libstdc++ tools/clonetrain.cpp -o build/clonetrain.exe
+"$CXX" -std=c++20 -O2 -D_USE_MATH_DEFINES -Ishared -Ishared/protocol -static -static-libgcc -static-libstdc++ tools/clonetrain.cpp -o build/clonetrain.exe
 echo "built build/dsound.dll and build/clonetrain.exe ($CFG)"

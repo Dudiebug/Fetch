@@ -20,11 +20,18 @@ game from Steam. On Proton, add `WINEDLLOVERRIDES="dsound=n,b" %command%` to the
 Cross-compiled with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw):
 
 ```
-LLVM_MINGW=/path/to/llvm-mingw implementation/client/Fetch/build.sh
+LLVM_MINGW=/path/to/llvm-mingw ./build.sh
 ```
 
-This writes `build/dsound.dll` and `build/clonetrain.exe` under `implementation/client/Fetch`. The game-independent logic is
-header-only C++20 under `implementation/shared/`.
+This writes `build/dsound.dll` and `build/clonetrain.exe`.
+
+| Path | What |
+|---|---|
+| `src/` | The mod: hooks, the game adapter, recording, the clone, training sessions, the menu. |
+| `shared/` | Game-independent logic, header-only C++20. `shared/clone/` is Fetch's own; the rest is shared with HSMMod. |
+| `tools/` | `clonetrain.cpp` (the trainer), `train.bat`, and `hsmclone.py` for reading recordings. |
+| `docs/` | `CLONE.md` (how it works), `HUMAN_TESTING.md` (in-game checks), `measurements/`. |
+| `third_party/minhook/` | MinHook, for the hooks. |
 
 ## Licence
 

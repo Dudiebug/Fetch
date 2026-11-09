@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read an HSMMod recording (.hsmrec, written with [mod] record=1): fighters, props and events at 60 Hz.
 
-The format is implementation/shared/record/hsm_record.h (docs/PLAN_RECORDER.md). A short or bad last chunk is a crash's
+The format is HSMMod's shared/record/hsm_record.h (github.com/Dudiebug/halfsword-multiplayer-mod). A short or bad last chunk is a crash's
 cut-off tail: it is reported and the rest still reads. Unknown chunk kinds are skipped. Stdlib only.
   hsmrec.py summary FILE                         header, fighters (bones, bodies, rate), props, event counts
   hsmrec.py events FILE [--kind K] [--fighter N] one line per event, seconds since the recording started

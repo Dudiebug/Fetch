@@ -4,7 +4,7 @@
 // GoreTracker per stand-in entity and turns its GoreActions into engine calls.
 //
 // Severed-part bits are Enum_DismembermentPart values 0..14, the same numbering as hsm::kCombatPartBits /
-// combat_sync.cpp's kPartBones (session/hsm_combat.h, implementation/client/HSMMod/src/gameplay/combat_sync.cpp).
+// combat_sync.cpp's kPartBones (session/hsm_combat.h, HSMMod's src/gameplay/combat_sync.cpp).
 // Not included from here: sync/ must not depend on session/, so kGoreSeveredBits duplicates that constant
 // and must be kept in sync with it by hand.
 //

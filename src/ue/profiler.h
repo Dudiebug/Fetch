@@ -3,7 +3,7 @@
 // capture of up to a few minutes. Stopping writes HSMProfile-<date>-<time>.txt (the functions by self and inclusive
 // time, the frame times) and a .json timeline (Chrome trace format: ui.perfetto.dev, chrome://tracing, speedscope)
 // next to the game exe. Start and stop with Ctrl+Shift+P in game or the agent command `prof`. When no capture runs,
-// a Scope costs one relaxed atomic load. Core logic: implementation/shared/util/hsm_profile.h.
+// a Scope costs one relaxed atomic load. Core logic: shared/util/hsm_profile.h.
 #pragma once
 #include "util/hsm_profile.h"
 #include <atomic>

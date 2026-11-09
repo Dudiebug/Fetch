@@ -143,7 +143,7 @@ the input exactly. For both fighters:
 They go in an Events block straight after the Play block they belong to. The file stays version 3: an older Fetch skips the block,
 and this one reads a file without it. A block that is not well formed, or follows no Play block, is skipped alone. Every Play block
 now gets one, empty if nothing happened, so play with no events is known to have had none. The rules are
-`implementation/shared/clone/hsm_clone_events.h`.
+`shared/clone/hsm_clone_events.h`.
 
 Strike, Armour and Stage go in a More block right after the Events block, so that an older Fetch, which refuses an Events block with
 kinds it does not know, still reads the rest. Every Play block from pre11 on gets one.
@@ -250,10 +250,9 @@ In a test loop on two recordings, where the foe stands still, that cut picking t
 2.4 s rather than 3.2 s (Dudie) and in 0.6 s rather than 1 s (m00). When it goes down, `Fetch.log` says how often it did both:
 `clone: down; this fight it turned to face you first N times, and was hurt playing M moves it then left alone`.
 
-The rules are in `implementation/shared/clone/`: `hsm_clone.h` (recordings, replay), `hsm_model.h` (the file, the model, its brain),
+The rules are in `shared/clone/`: `hsm_clone.h` (recordings, replay), `hsm_model.h` (the file, the model, its brain),
 `hsm_train.h` (the trainer), `hsm_clone_rules.h` (levels, the lobby rule), `hsm_clone_events.h` (fight events),
-`hsm_clone_armor.h` (armour and strikes), `hsm_clone_drill.h` (training sessions, the clone's weapon), `hsm_fetch_menu.h` (the menu). The mod is `implementation/client/Fetch/`, which holds
-its own copy of all the engine and fighter code it uses.
+`hsm_clone_armor.h` (armour and strikes), `hsm_clone_drill.h` (training sessions, the clone's weapon), `hsm_fetch_menu.h` (the menu). The mod is `src/`, which holds its own copy of all the engine and fighter code it uses.
 
 ### Offline only
 
@@ -274,9 +273,9 @@ yours.
 
 All of this is offline, on one player's recordings (3.41 h usable). None of it shows how a fight feels in game.
 
-The rule for making the model the default was fixed before the test, in `training/data/split/RULE.md`. Recordings were split by
+The rule for making the model the default was fixed before the test, in `docs/measurements/RULE.md`. Recordings were split by
 recording. Everything was tuned on the validation set, and the test set was run once, through the shipped code and the real file. The
-saved output is `training/data/split/TEST_RESULT.txt`. **The model passed every rule, so `auto` prefers it.**
+saved output is `docs/measurements/TEST_RESULT.txt`. **The model passed every rule, so `auto` prefers it.**
 
 Next 300 ms on the test set: 30 recordings, 0.72 h, 9789 moments.
 
@@ -339,7 +338,7 @@ once, after the inputs were chosen. All are one player, offline, and mostly one 
 | Decisions playing a clip of the wrong weapon length | 0% | 59% | 0% |
 | Short grab presses while armed, per minute | 0.28 | 1.56 | about 0.14 (three seeds) |
 
-On the 18 newer recordings the model passed every point of `training/data/split/RULE.md` against replay: J +.020, interval by
+On the 18 newer recordings the model passed every point of `docs/measurements/RULE.md` against replay: J +.020, interval by
 recording +.005 to +.036, key F1 .637 against .614, guard F1 .805 against .768. Median facing was 16.3 degrees, the player's 14.3,
 replay's 11.8. This is not a repeat of the pre-registered test: the data and the foe differ.
 
@@ -369,7 +368,7 @@ Swords 1H .07, no type short .42, no type middling .83. Nothing was played as Sw
 
 Sorting by type did not make the clone predict the player better. It is the right thing for the clone to do with a weapon, not a
 higher score, and mouse correlation fell. Letting the nets hear the fighter's own type won part of that back, and with it every seed
-met all of `training/data/split/RULE.md` except point 1, as by length also did: on validation alone the interval for J still crosses
+met all of `docs/measurements/RULE.md` except point 1, as by length also did: on validation alone the interval for J still crosses
 0. Splits by type are small, and swing both ways between types: Hafted 2H rose from .12 to .50 mouse correlation, Polearms fell from
 .34 to .15, on under 220 decisions each.
 
@@ -392,6 +391,6 @@ go and fetch a dropped weapon, partly because the recordings show the player rar
 The trainer is built for Windows. Its source also has a Linux path, which has not been built or run yet:
 
 ```
-g++ -std=c++20 -O2 -static -pthread -Iimplementation/shared -Iimplementation/shared/protocol \
-    implementation/client/Fetch/tools/clonetrain.cpp -o clonetrain
+g++ -std=c++20 -O2 -static -pthread -Ishared -Ishared/protocol \
+    tools/clonetrain.cpp -o clonetrain
 ```

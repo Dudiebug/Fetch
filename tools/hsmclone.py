@@ -50,7 +50,7 @@ def class_hash(name):
 
 def weapon_types():
     """{class hash: the game's weapon type}, from the list the mod uses (shared/clone/hsm_weapon_types.h)."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "implementation", "shared", "clone", "hsm_weapon_types.h")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared", "clone", "hsm_weapon_types.h")
     text = open(path, encoding="utf-8").read()
     order = [t.strip() for t in re.search(r"enum class WeaponType : uint8_t \{(.*?)\}", text).group(1).replace(" = 0", "").split(",")]
     return {class_hash(n): order.index(t) for n, t in re.findall(r'\{"(\w+)", WeaponType::(\w+)\}', text)}
