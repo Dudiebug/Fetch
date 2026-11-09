@@ -1,0 +1,15 @@
+; The ordinals are the system dsound.dll's: the game imports 1, 3, 6, 8, 11 and 12 by ordinal.
+LIBRARY dsound
+EXPORTS
+    DirectSoundCreate = DsFwd0 @1
+    DirectSoundEnumerateA = DsFwd1 @2
+    DirectSoundEnumerateW = DsFwd2 @3
+    DllCanUnloadNow = DsFwd3 @4 PRIVATE
+    DllGetClassObject = DsFwd4 @5 PRIVATE
+    DirectSoundCaptureCreate = DsFwd5 @6
+    DirectSoundCaptureEnumerateA = DsFwd6 @7
+    DirectSoundCaptureEnumerateW = DsFwd7 @8
+    GetDeviceID = DsFwd8 @9
+    DirectSoundFullDuplexCreate = DsFwd9 @10
+    DirectSoundCreate8 = DsFwd10 @11
+    DirectSoundCaptureCreate8 = DsFwd11 @12

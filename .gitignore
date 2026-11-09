@@ -1,0 +1,14 @@
+build/
+*.dll
+*.exe
+*.map
+*.o
+Fetch.ini
+Fetch.log
+Clones/
+*.hsmclone
+*.hsmclone.old
+*.hsmmodel
+*.hsmmodel.bak
+*.hsmrec
+__pycache__/

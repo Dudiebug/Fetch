@@ -1,0 +1,122 @@
+// Where a weapon sits in the hand that holds it, and when a stand-in's seat is wrong enough to make again (pure, no
+// engine types).
+//
+// The rig seats a stand-in's weapon from the owner's grip flags (hsm_grip.h SeatFor), as the game's own re-seat would.
+// The owner's game does not always re-seat: an alt grip on an axe slides the hand along the shaft and keeps the weapon's
+// turn, so the guessed seat can hold the weapon upside down (mirror test, 2026-10-25: hands 5 uu off, tip 50-125 uu off,
+// the axe head up where the owner's hung down). The pose carries the owner's hand_r and weapon root, so the stand-in can
+// take the owner's real seat: the weapon root in the hand's frame. HeldCheck says when the stand-in's own seat has
+// differed from the owner's for long enough, with the owner's seat steady, to make the joint again there.
+#pragma once
+#include "sync/hsm_pose.h"
+#include "sync/hsm_pose_codec.h"
+#include <algorithm>
+#include <cmath>
+
+namespace hsm::sync {
+
+struct HeldPose {
+    V3 pos;   // weapon root in the hand bone's frame, uu
+    Q4 rot;   // weapon root rotation in the hand bone's frame
+};
+
+inline HeldPose HeldIn(V3 handPos, Q4 handRot, V3 weaponPos, Q4 weaponRot) {
+    const Q4 inv = QuatConj(QuatNormalize(handRot));
+    return HeldPose{QuatRotateVec(inv, Vec3Sub(weaponPos, handPos)), QuatNormalize(QuatMul(inv, QuatNormalize(weaponRot)))};
+}
+
+// The weapon root's world pose for a hand at (handPos, handRot) holding it as `held`.
+inline void HeldWorld(V3 handPos, Q4 handRot, const HeldPose& held, V3* pos, Q4* rot) {
+    const Q4 h = QuatNormalize(handRot);
+    *pos = Vec3Add(handPos, QuatRotateVec(h, held.pos));
+    *rot = QuatNormalize(QuatMul(h, held.rot));
+}
+
+constexpr double kHeldReseatDeg = 25.0;     // a seat turned further than this from the owner's is wrong
+constexpr double kHeldReseatUu = 10.0;      // ... or moved further than this along or off the shaft
+constexpr double kHeldSteadyDeg = 10.0;     // the owner's seat counts as steady while it stays this close to where it was
+constexpr double kHeldSteadyUu = 4.0;
+constexpr double kHeldPersistMs = 300.0;    // wrong and steady this long: re-seat (a hand mid-slide is not a seat)
+constexpr double kHeldMinGapMs = 1000.0;    // the locked joint needs time to carry the weapon to a new seat
+
+// A flail's chain drags its handle about: a seat that is a little off is the chain's doing, and a re-seat shakes the chain
+// (the joint is made again and the chain re-armed), so a flail is re-seated later and less often.
+struct HeldTolerance {
+    double deg, uu, minGapMs;
+    // A weapon gripped mid-shaft (spear, staff): the owner's hand slides along it and the stand-in's cannot follow, so
+    // the seat may be off by up to slideUu along `axis` (unit, hand frame); `uu` still holds across the shaft. Logs,
+    // 0.7.0: spears and staffs re-seated at 35-55 uu, each re-seat jumping the weapon and breaking the off hand's joint.
+    V3 axis{};
+    double slideUu = 0.0;   // 0: no shaft
+};
+inline HeldTolerance HeldToleranceFor(bool hasChain) {
+    return hasChain ? HeldTolerance{45.0, 20.0, 3000.0} : HeldTolerance{kHeldReseatDeg, kHeldReseatUu, kHeldMinGapMs};
+}
+
+inline bool HeldDiffers(const HeldPose& a, const HeldPose& b, double deg, double uu) {
+    return QuatAngleDeg(a.rot, b.rot) > deg || Vec3Dist(a.pos, b.pos) > uu;
+}
+
+inline double Vec3DotH(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+inline bool HeldDiffers(const HeldPose& a, const HeldPose& b, const HeldTolerance& tol) {
+    if (tol.slideUu <= tol.uu) return HeldDiffers(a, b, tol.deg, tol.uu);
+    if (QuatAngleDeg(a.rot, b.rot) > tol.deg) return true;
+    const V3 d = Vec3Sub(a.pos, b.pos);
+    const double along = Vec3DotH(d, tol.axis);
+    return std::fabs(along) > tol.slideUu || Vec3Dist(d, Vec3Scale(tol.axis, along)) > tol.uu;
+}
+
+constexpr double kHeldMidShaftUu = 25.0;   // the hand this far along the shaft from the weapon root: gripped mid-shaft
+constexpr double kHeldSlideUu = 60.0;      // how far a mid-shaft seat may slide before it is made again
+constexpr double kHeldMinShaftUu = 30.0;   // a base-to-tip shorter than this gives no direction to trust
+
+// The tolerance for the owner's seat `owner` of a weapon whose blade base and tip (world) are `base`, `tip`, in a hand
+// turned `handRot`: a mid-shaft grip gets the slide along the shaft. A sword is held at its hilt, by the root, and keeps
+// the plain tolerance.
+inline HeldTolerance HeldToleranceForShaft(HeldTolerance tol, const HeldPose& owner, Q4 handRot, V3 base, V3 tip) {
+    const V3 w = Vec3Sub(tip, base);
+    const double len = std::sqrt(Vec3DotH(w, w));
+    if (len < kHeldMinShaftUu) return tol;
+    const V3 axis = QuatRotateVec(QuatConj(QuatNormalize(handRot)), Vec3Scale(w, 1.0 / len));
+    if (std::fabs(Vec3DotH(owner.pos, axis)) < kHeldMidShaftUu) return tol;
+    tol.axis = axis;
+    tol.slideUu = std::max(tol.slideUu, kHeldSlideUu);
+    return tol;
+}
+
+class HeldCheck {
+public:
+    void Reset() { since_ = -1.0; }
+    // Another joint or weapon: the seat last made says nothing about it.
+    void Forget() { Reset(); seated_ = false; }
+    // True when the stand-in's seat has differed from the owner's for kHeldPersistMs while the owner's seat held steady,
+    // and the last re-seat is kHeldMinGapMs old. The caller re-seats at once on true. A seat already made for the owner's
+    // current seat is not made again: when the joint could not carry the weapon all the way there (mirror test,
+    // 2026-10-25: "28 deg, 0.6 uu off" logged every second), another re-seat at the same place only shakes it. The owner
+    // moving the weapon in the hand (kHeldSteadyDeg / kHeldSteadyUu from that seat) allows the next one.
+    bool Update(double nowMs, const HeldPose& owner, const HeldPose& standIn, const HeldTolerance& tol = HeldToleranceFor(false)) {
+        if (!HeldDiffers(owner, standIn, tol)) { since_ = -1.0; return false; }
+        if (since_ < 0.0 || HeldDiffers(owner, anchor_, kHeldSteadyDeg, kHeldSteadyUu)) {
+            since_ = nowMs;
+            anchor_ = owner;
+            return false;
+        }
+        if (nowMs - since_ < kHeldPersistMs || nowMs - lastSeatMs_ < tol.minGapMs) return false;
+        if (seated_ && !HeldDiffers(owner, seatedAt_, kHeldSteadyDeg, kHeldSteadyUu)) return false;
+        lastSeatMs_ = nowMs;
+        since_ = -1.0;
+        seated_ = true;
+        seatedAt_ = owner;
+        return true;
+    }
+
+private:
+    double since_ = -1.0;          // when the current wrong, steady stretch began; < 0: none
+    double lastSeatMs_ = -1e18;
+    HeldPose anchor_;              // the owner's seat at the start of the stretch
+    bool seated_ = false;          // a re-seat was made (since Forget) ...
+    HeldPose seatedAt_;            // ... at this owner's seat
+};
+
+}  // namespace hsm::sync
