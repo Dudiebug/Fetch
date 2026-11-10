@@ -226,35 +226,28 @@ void FightWatch::StrikeAfter(ScriptCall& call, bool ran, uint8_t surface, double
         if (strikes_.size() >= kOpenStrikes) FlushStrikes(now + 1);
         strikes_.push_back({});
         o = &strikes_.back();
-        o->victim = a.victim; o->collider = a.collider; o->who = a.who; o->hand = a.hand; o->part = a.part; o->stab = a.stab;
+        o->victim = a.victim; o->collider = a.collider; o->who = a.who; o->hand = a.hand;
     }
-    o->lastMs = now; ++o->contacts;
-    if (!ran) return;
-    ++o->ran;
-    // The blow is its call that hurt most: where it landed, the surface it met.
-    const float d = std::isfinite(damage) ? float(std::clamp(damage, -1e6, 1e6)) : 0.f;
-    if (o->ran == 1 || d > o->best) {
-        o->best = d;
-        o->damage = d; o->surface = surface; o->part = a.part; o->stab = a.stab;
-        o->cut = std::isfinite(cut) ? float(std::clamp(cut, -1e6, 1e6)) : 0.f;
-    }
+    o->lastMs = now;
+    o->fold.Add(ran, a.part, a.stab, surface, damage, cut);   // a call another mod blocked before its body is a contact only
 }
 
 // Blows with no call for a while are over: each is a Strike, classed by what its victim wore.
 void FightWatch::FlushStrikes(double olderThanMs) {
     for (size_t i = 0; i < strikes_.size();) {
-        const OpenStrike o = strikes_[i];
-        if (o.lastMs >= olderThanMs) { ++i; continue; }
+        const OpenStrike s = strikes_[i];
+        if (s.lastMs >= olderThanMs) { ++i; continue; }
         strikes_.erase(strikes_.begin() + std::ptrdiff_t(i));
-        if (!o.ran) continue;   // every call left early: the body never weighed it
-        const uint8_t victim = uint8_t(1 - o.who);
+        const clone::BlowFold& o = s.fold;
+        if (!o.strikes()) continue;   // every call left early, or was blocked: the body never weighed it
+        const uint8_t victim = uint8_t(1 - s.who);
         const clone::ArmourView& wears = armour_[victim].view;   // bare until read
         const clone::StrikeClass how = clone::ClassifyStrike(o.surface, o.damage, o.cut, o.part, wears);
-        sink_(clone::MakeEvent(clone::Ev::Strike, o.who, o.hand, o.part, o.damage, clone::PackStrike(o.surface, how, o.stab)));
+        sink_(clone::MakeEvent(clone::Ev::Strike, s.who, s.hand, o.part, o.damage, clone::PackStrike(o.surface, how, o.stab)));
         if (strikeLines_ < kStrikeLines) {
             ++strikeLines_;
             HSM_LOG("clone: strike: %s hand=%s part=%s surface=%u damage=%.2f cut=%.2f stab=%.2f calls=%d/%d -> %s%s",
-                    o.who == clone::kMe ? "me" : "foe", o.hand == clone::kBody ? "body" : o.hand == 0 ? "R" : "L",
+                    s.who == clone::kMe ? "me" : "foe", s.hand == clone::kBody ? "body" : s.hand == 0 ? "R" : "L",
                     clone::ArmourPartName(o.part), unsigned(o.surface), double(o.damage), double(o.cut), double(o.stab), o.ran, o.contacts,
                     clone::StrikeClassName(how), armour_[victim].known ? "" : " (armour not read yet)");
         }

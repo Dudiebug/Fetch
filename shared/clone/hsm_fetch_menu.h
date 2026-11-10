@@ -37,7 +37,20 @@ struct MenuSettings {
     std::string mergeName;
     bool merging = false;              // a merge runs now (shown; no second one meanwhile)
     bool showMind = false;             // show_mind=: the overlay that shows the clone thinking
+    bool online = false;               // in a Steam lobby: the clone's rows read "offline only" and do nothing (OfflineOnly)
 };
+
+// The rows of what only happens offline: the clone, its brain and weapon, the duel, training and the clone-thinking overlay. In a
+// Steam lobby the menu still records, names and merges recordings, but these rows cannot be changed, and no key on them spawns a
+// clone or starts a session.
+inline bool OfflineOnly(MenuRow r) {
+    switch (r) {
+        case MenuRow::Clone: case MenuRow::Brain: case MenuRow::CloneWeapon: case MenuRow::Duel: case MenuRow::Respawn:
+        case MenuRow::Training: case MenuRow::TrainingLength: case MenuRow::ShowMind: return true;
+        default: return false;
+    }
+}
+constexpr const char* kOfflineOnly = "offline only";
 
 // A line of the menu as drawn: the main page's rows, or the Merge page's.
 struct MenuLine {
@@ -145,6 +158,8 @@ inline int NextRecording(const std::string& current, bool onNew, const std::vect
     return at == 0 ? 0 : int(list[size_t(at - 1)]) + 1;
 }
 
+inline const char* MenuLabel(MenuRow r);
+
 class Menu {
 public:
     bool open() const { return open_; }
@@ -211,6 +226,7 @@ public:
         if (k == MenuKey::Up) { row_ = (row_ + kMenuRows - 1) % kMenuRows; onNew_ = false; return MenuChange::None; }
         if (k == MenuKey::Down) { row_ = (row_ + 1) % kMenuRows; onNew_ = false; return MenuChange::None; }
         const int step = k == MenuKey::Left ? -1 : 1;
+        if (s.online && OfflineOnly(MenuRow(row_))) { note_ = std::string(MenuLabel(MenuRow(row_))) + ": offline only"; return MenuChange::None; }
         switch (MenuRow(row_)) {
             case MenuRow::Record: s.record = !s.record; return MenuChange::Record;
             // Left and right go through the recordings, then New; Enter on New types a name.
@@ -328,6 +344,7 @@ inline const char* MenuLabel(MenuRow r) {
 }
 
 inline std::string MenuValue(MenuRow r, const MenuSettings& s) {
+    if (s.online && OfflineOnly(r)) return kOfflineOnly;
     switch (r) {
         case MenuRow::Record: return s.record ? "ON" : "OFF";
         case MenuRow::RecordTo: return !s.recordTo.empty() ? s.recordTo : s.mine.empty() ? "my Steam name" : "my Steam name (" + s.mine + ")";
@@ -408,6 +425,18 @@ inline int ParseMenuKey(const std::string& value) {
 inline const char* MenuKeyClash(int vk) {
     if (vk == 'P') return "the game's pause key";
     if (vk == 'W' || vk == 'S' || vk == 'A' || vk == 'D') return "a key the menu moves with";
+    return nullptr;
+}
+
+// Why a key is one of HSMMod's own (its defaults: chat on Enter, T, Y or U, class bite H, build card K, voice V, and G, B, Tab and
+// the arrows), or null. In its lobbies HSMMod leaves its keys alone while the Fetch menu has the keyboard, but a menu or overlay key
+// of these would also do HSMMod's thing whenever the menu is shut. Said in the log when a lobby is joined.
+inline const char* HsmModKeyClash(int vk) {
+    if (vk == 0x0D || vk == 'T' || vk == 'Y' || vk == 'U') return "a key HSMMod's chat may open on";
+    if (vk == 'B') return "HSMMod's class bite key";
+    if (vk == 'K') return "HSMMod's build card key";
+    if (vk == 'V') return "HSMMod's voice key";
+    if (vk == 'G' || vk == 'H' || vk == 0x09 || (vk >= 0x25 && vk <= 0x28)) return "one of HSMMod's keys";
     return nullptr;
 }
 

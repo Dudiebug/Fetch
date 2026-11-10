@@ -260,3 +260,49 @@ Fetch alone first, `record=1`. Send `Fetch.log` and `Clones/<your name>.hsmclone
     someone else's recording, and with `duel=0` (Free Mode's fighters in too): play near whichever foe is nearest is kept.
 82. Set `record_clones=0` and restart. Expected: `fetch: record_clones=0: nothing is recorded while a clone is in the fight`, and the
     file does not grow while the clone is in, as in pre12. Load a recording made in step 81 in pre12: it loads as before.
+
+### Recording in a multiplayer lobby, and the menu there with HSMMod (pre14) — PENDING — HUMAN TESTING
+
+Two players, each with HSMMod and this Fetch, `record=1`. Steps 83 to 89 work with any HSMMod 0.8.0; steps 90 to 94 need
+HSMMod 0.8.0-pre44 or newer on both. "HSMMod's log" is HSMMod's own log next to `Fetch.log`.
+
+83. In a Steam lobby with `sync_mode=owner`, fight one on one for two minutes, both landing hits. Expected in `Fetch.log`: `clone:
+    recording in a Steam lobby too (record_online=0 stops it)` once, then `clone: strike: me ...` lines for your blows that land.
+    Afterwards `python tools/hsmclone.py info Clones/<name>.hsmclone` shows more hours of play than before, `events:` with hits
+    both ways, and `your strikes:`. Load the file offline as a clone: it wears the kit you fought in, and fights.
+84. As step 83, and count on each machine HSMMod's `claims: replayed #...` lines (the other player's blows on you) against
+    `Fetch.log`'s `clone: strike: foe ...` lines over the same minute. Expected: no more strike lines than replayed claims: a blow
+    HSMMod stops gives none. Then compare with `strikes=0` and `parries=0` in `Fetch.ini` (`fetch: strikes=0: no Strike events`,
+    `fetch: parries=0: no Parried events`): HSMMod's `claims: sent #...` and `claims: replayed #...` lines come as often, and the
+    blows do the same damage, with Fetch's watch on and off.
+85. In a co-op fight (Abyss co-op, or two players on one team against bots), stay near your teammate only for half a minute, then
+    fight a bot. Expected: no `clone: strike: me ...` line for a blow on your teammate; `hsmclone.py info` shows the play near the
+    bot kept and the half minute by your teammate not (the hours of play go up only by the fight with the bot).
+86. Die, spectate, and play the next round. Expected: nothing crashes, nothing is kept while you are down or spectating
+    (`hsmclone.py info`: the hours of play go up by about the time you fought), and recording goes on in the next round with no
+    `clone: writing to Clones/ failed` line.
+87. Open HSMMod's chat in a fight and type a message with W, A, S, D and Space in it. Expected: your fighter does not move while you
+    type, and no new `clone: recording the key ...` line comes with it. The recording made around it fights offline as before.
+88. Set `record_online=0` and restart. Expected: `fetch: record_online=0: nothing is recorded in a Steam lobby`, no `clone: recording
+    in a Steam lobby too` line, and the file does not grow in a lobby. Offline the same play is recorded as in pre13.
+89. Offline (no lobby), with HSMMod installed: recording, clones, training and the menu work as in pre13, and there is no `clone:
+    recording in a Steam lobby too` line. In a lobby with an HSMMod older than 0.8.0-pre44: recording works as in step 83, `;` does
+    nothing, and `fetch: menu stays shut in this lobby: HSMMod 0.8.0-pre44 or newer is needed for it` comes once.
+90. With HSMMod 0.8.0-pre44 or newer, start the game. Expected: `fetch: HSMMod is here (sync mode ...): in its lobbies the Fetch
+    menu opens, and keys it plays again are not recorded twice`, once, and again when the lobby's sync mode is set. In a lobby's
+    fight press `;`. Expected: `fetch: menu open (N clones in Clones/) in a Steam lobby: the clone rows are offline only`. Clone to
+    fight, Clone brain, One on one, Bring the clone back, Clone's weapon, Training session, Session length and Show the clone
+    thinking read "offline only"; left, right or Enter on one only says "...: offline only" on the status line, and no clone comes
+    in. Record my fighting, Record to, Rename, Merge recordings and Close work, and the status lines show the recording and the
+    tally (hits landed and taken) growing as you fight. While the menu is open, B, K, V and T do nothing of HSMMod's.
+91. With the menu open, choose Close and press Enter. Expected: `fetch: menu closed`, and HSMMod's chat does not open. Type a new
+    name in "Record to" with T, Y and U in it: HSMMod's chat does not open either.
+92. Open HSMMod's chat and type `;` in it. Expected: a semicolon in the chat, and no `fetch: menu open` line. Close the chat and
+    press `;`: the menu opens.
+93. Host with `sync_mode=host` and the input delay on (`host: input delay on: N ms` in the host's HSMMod log). Expected on the
+    host: `fetch: HSMMod is here (sync mode host): ...`. Swing ten times, one press each: the host's recording, fought offline as a
+    clone, swings once per press, not twice. On the client: `fetch: in this lobby the host's machine moves your fighter (HSMMod host
+    sync); your keys are recorded as you press them`, once.
+94. Set `menu_key=k` and `mind_key=v` and join a lobby. Expected: `fetch: menu_key=K is also HSMMod's build card key; in a lobby one
+    press may do both. Another key in Fetch.ini avoids that`, and the same for `mind_key=V` (HSMMod's voice key). With the default
+    keys (`;` and `=`) there is no such line. Set them back afterwards.

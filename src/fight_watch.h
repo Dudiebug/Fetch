@@ -57,13 +57,12 @@ private:
     struct HitParams { int32_t other = -1, impulse = -1, hit = -1; };
     void OnHit(ue::UObject* obj, ue::UFunction* fn, void* params);
     const HitParams& ParamsOf(ue::UFunction* fn);
-    // One blow: the Deal Complex Damage calls of one striking component on one fighter, a few ms apart.
+    // One blow: the Deal Complex Damage calls of one striking component on one fighter, a few ms apart (clone::BlowFold).
     struct OpenStrike {
         ue::UObject* victim = nullptr; ue::UObject* collider = nullptr;
-        uint8_t who = 0, hand = clone::kBody, part = 0xFF, surface = 0;
-        float damage = 0, cut = 0, stab = 0, best = -1;
+        uint8_t who = 0, hand = clone::kBody;
         double lastMs = 0;
-        int contacts = 0, ran = 0;
+        clone::BlowFold fold;
     };
     friend struct StrikeHub;
     friend struct ParryHub;

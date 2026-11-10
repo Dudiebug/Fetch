@@ -181,6 +181,30 @@ private:
     std::array<double, 9> last_{};
 };
 
+// One blow: the game's Deal Complex Damage calls of one striking component on one fighter, a few ms apart (one per physics step
+// of the contact), folded into one Strike. The call that hurt most says where it landed and what it met. A call whose body did not
+// run only counts as a contact: it left at the game's own gate, or another mod stopped it before it ran (HSMMod stops a stand-in's
+// own contact on a fighter of this machine; its blow comes again as HSMMod's replay, which runs). A blow none of whose calls ran
+// is no Strike: the body never weighed it.
+struct BlowFold {
+    uint8_t part = kNoPart, surface = 0;
+    float damage = 0, cut = 0, stab = 0, best = -1;
+    int contacts = 0, ran = 0;
+    // ran: the call's body ran (its outputs are its own). part and stab are what the call was asked; the rest it gave back.
+    void Add(bool bodyRan, uint8_t callPart, float callStab, uint8_t callSurface, double callDamage, double callCut) {
+        if (contacts++ == 0) { part = callPart; stab = callStab; }
+        if (!bodyRan) return;
+        ++ran;
+        const float d = std::isfinite(callDamage) ? float(std::clamp(callDamage, -1e6, 1e6)) : 0.f;
+        if (ran == 1 || d > best) {
+            best = d;
+            damage = d; surface = callSurface; part = callPart; stab = callStab;
+            cut = std::isfinite(callCut) ? float(std::clamp(callCut, -1e6, 1e6)) : 0.f;
+        }
+    }
+    bool strikes() const { return ran > 0; }
+};
+
 // What happened in a stretch of fighting, for the player to see (the Fetch menu).
 struct Tally {
     uint32_t landed = 0, taken = 0, clashes = 0, thrusts = 0, kicks = 0, grabs = 0, falls = 0, kills = 0, deaths = 0;

@@ -41,8 +41,9 @@ public:
     StyleRecorder(const StyleRecorder&) = delete;
     StyleRecorder& operator=(const StyleRecorder&) = delete;
     // Per GameMode tick, game thread. clone: a style clone in this fight. It is recorded as any foe is, unless record_clones=0
-    // (SetRecordClones). paused: keep nothing (a Steam lobby). name: the file's, on the first write.
-    void Tick(Adapter& adapter, ue::UObject* me, ue::UObject* clone, bool fightLevel, bool paused, float dt, const std::string& name);
+    // (SetRecordClones). online: in a Steam lobby (one of my team is not the foe). paused: keep nothing (record_online=0 in a lobby,
+    // or no name yet). name: the file's, on the first write.
+    void Tick(Adapter& adapter, ue::UObject* me, ue::UObject* clone, bool fightLevel, bool online, bool paused, float dt, const std::string& name);
     // Fetch.ini record_clones=: whether play while a clone is in the fight is recorded. Game thread.
     void SetRecordClones(bool on) { recordClones_ = on; }
     // The menu's record switch: off writes what is kept and stops; on starts again (the same file). Game thread.
@@ -63,7 +64,7 @@ private:
     void CountNew();
 
     void Hook(Adapter& adapter, ue::UObject* me);
-    void FindFoe(Adapter& adapter, ue::UObject* me);
+    void FindFoe(Adapter& adapter, ue::UObject* me, bool online);
     void Flush();
     bool Open(const std::string& name);
     void Append(const std::vector<uint8_t>& bytes);
@@ -88,7 +89,7 @@ private:
     std::vector<std::string> keysSeen_;   // the keys of things other than the fighter logged once each (a few)
     FightWatch watch_{[this](const clone::FightEvent& e) { collector_.Note(e); }, [this] { return live_; }};
     clone::Tally tally_;
-    bool recordClones_ = true, cloneLogged_ = false;
+    bool recordClones_ = true, cloneLogged_ = false, onlineLogged_ = false;
     size_t counted_ = 0;             // the collector's pending events tally_ has seen
 };
 

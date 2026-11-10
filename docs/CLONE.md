@@ -2,7 +2,9 @@
 
 Fetch, named after the double of a living person in Irish folklore, lets a player record how they fight, train a small model from it, share one file, and let anyone
 fight that style offline. It has nothing to do with the Adaptive Rival mod and uses none of its code, data or design. It is a mod of
-its own: it needs no other mod, talks to no other mod, and does not care what else is installed.
+its own: it needs no other mod, and does not care what else is installed. With HSMMod, the multiplayer mod, it records your play in
+its lobbies too, and with HSMMod 0.8.0-pre44 or newer the two share a small link so that the Fetch menu works there
+([Playing with HSMMod](#playing-with-hsmmod)).
 
 The in-game checks in `docs/HUMAN_TESTING.md` are still to be done for this version.
 
@@ -21,6 +23,7 @@ The first start writes `Fetch.ini` next to the exe and logs to `Fetch.log`. This
 |---|---|
 | `record=1` | Writes how you fight to `Clones/<name>.hsmclone`, about 22 MB an hour. Later sessions add to the same file. |
 | `record_clones=1` | Your fight against a clone (yours or anyone's) is recorded too, as against any foe. `0`: nothing is kept while a clone is in, as before pre13. |
+| `record_online=1` | Your own play in a Steam lobby (a multiplayer fight) is recorded too (pre14 on). `0`: nothing is kept in a lobby, as before pre14. |
 | `name=` | The file's name. Empty: your Steam name. The menu's "Record to" sets it, and "Rename this recording" changes it. |
 | `clone=<name>` | Offline, the clone called `<name>` in `Clones/` joins each fight level, 5 m ahead of you. `1`: the first one there. `0`: none. |
 | `duel=0` | Keeps Free Mode's own fighters in the fight. By default they are removed while a clone is in. |
@@ -60,9 +63,11 @@ has kept play and the file's size, the fight's tally since the game started (hit
 and taken, kills, deaths), how your blows met the foe's armour, what the clone is doing, and the training session. The menu does not
 pause the game.
 
-The menu opens only offline (as the clones fight), with your fighter alive and the game's HUD on screen: not in the main menu, not
-over the pause menu, not in a Steam lobby. It closes by itself when you die, when the HUD goes (a level change), or when you join a
-lobby.
+The menu opens with your fighter alive and the game's HUD on screen: not in the main menu, not over the pause menu. In a Steam lobby
+it opens only with HSMMod 0.8.0-pre44 or newer in the game, and not while HSMMod's chat is open. There the rows for the clone and for
+training (Clone to fight, Clone brain, One on one, Bring the clone back, Clone's weapon, Training session, Session length, Show the
+clone thinking) read "offline only" and do not change: clones stay offline. It closes by itself when you die, when the HUD goes (a
+level change), when HSMMod's chat opens, or in a lobby without that HSMMod.
 
 ### Naming your recordings
 
@@ -131,8 +136,8 @@ overlay on)`. With the panel off the clone picks exactly as before; with it on i
 **The main, most tested way to use Fetch is without training:** record, then fight the recording. The clone replays real moments of
 the recorded player's input, the ones that best fit the fight it is in.
 
-1. **Record.** Set `record=1` (or "Record my fighting" in the menu) and fight. Only play near a living foe is kept. Nothing is kept
-   while in a Steam lobby. Fighting a clone, your own included, is recorded like any fight (pre13 on; `record_clones=0` turns it
+1. **Record.** Set `record=1` (or "Record my fighting" in the menu) and fight. Only play near a living foe is kept. Your play in a
+   Steam lobby is kept too (pre14 on; `record_online=0` turns it off; [Playing with HSMMod](#playing-with-hsmmod)). Fighting a clone, your own included, is recorded like any fight (pre13 on; `record_clones=0` turns it
    off): it is your play, and the clone is the foe. The clone's own keys are never taken for yours.
 2. **Share.** Send the `.hsmclone` from `Clones/`. It grows with play, about 22 MB an hour. It holds the name, the last kit fought in,
    and the recording. The mod uploads nothing.
@@ -378,15 +383,39 @@ In a test loop on two recordings, where the foe stands still, that cut picking t
 
 The rules are in `shared/clone/`: `hsm_clone.h` (recordings, replay), `hsm_model.h` (the file, the model, its brain),
 `hsm_train.h` (the trainer), `hsm_clone_rules.h` (levels, the lobby rule), `hsm_clone_events.h` (fight events),
-`hsm_clone_armor.h` (armour and strikes), `hsm_clone_drill.h` (training sessions, the clone's weapon), `hsm_fetch_menu.h` (the menu). The mod is `src/`, which holds its own copy of all the engine and fighter code it uses.
+`hsm_clone_armor.h` (armour and strikes), `hsm_clone_drill.h` (training sessions, the clone's weapon), `hsm_fetch_menu.h` (the menu), and
+`shared/interop/hsm_mod_link.h` (the link with HSMMod). The mod is `src/`, which holds its own copy of all the engine and fighter code it uses.
 
-### Offline only
+### Clones offline, recording anywhere
 
-A clone fights only outside a Steam lobby. Fetch asks Steam itself: entering a lobby arrives as a callback, and from then on it
-asks once a second whether the lobby is still there. Joining a lobby removes the clone and pauses recording. Half Sword never starts
+A clone fights only outside a Steam lobby, and so do training sessions and the clone-thinking overlay. Fetch asks Steam itself:
+entering a lobby arrives as a callback, and from then on it asks once a second whether the lobby is still there. Joining a lobby
+removes the clone and ends a training session. Recording goes on (pre14 on), unless `record_online=0`. Half Sword never starts
 Steam itself, so Fetch waits 15 s for a mod that does, then starts it and runs its callbacks. If Steam will not start, there are no
-clones and no recording until it does, and Fetch tries again every 10 s. Fetch hooks ProcessEvent 20 s after the game starts, so that it does not patch at
+clones and no recording until it does (the recording is named after your Steam name), and Fetch tries again every 10 s. Fetch hooks ProcessEvent 20 s after the game starts, so that it does not patch at
 the same moment as anything else.
+
+### Playing with HSMMod
+
+With HSMMod in the same game, Fetch records your own play in its lobbies as in any fight (pre14 on): your keys, your fighter and
+the nearest foe, the fight's events and your kit. Each player's Fetch records only that player. A teammate (co-op, or one on your
+team) is never taken for the foe. `Fetch.log` says `clone: recording in a Steam lobby too (record_online=0 stops it)` once.
+
+With HSMMod 0.8.0-pre44 or newer, the two mods also share a small link:
+
+- The Fetch menu opens in a lobby (above). While it is open, or while you type a name in it, HSMMod leaves its own keys alone. While
+  HSMMod's chat is open, `;` is only a semicolon there.
+- Keys that HSMMod holds back and plays again a moment later (its input delay) are recorded once, as you pressed them.
+
+`Fetch.log` says `fetch: HSMMod is here (sync mode ...)` when it sees one. With an older HSMMod, recording works the same, but the
+menu stays shut in a lobby, and the log says so once. When you join a lobby, the log also says if `menu_key` or `mind_key` is one of
+HSMMod's keys (T, Y, U, H, K, V, G or B): one press there may do both.
+
+In a lobby the recording holds less than offline:
+
+- Your foe's left-hand thrusts, kicks, parries and grabs are not seen there.
+- How a blow of yours met the foe (a Strike event) is this machine's estimate. The other player's machine decides what it did.
+- Clones stay offline: no clone joins a lobby, and no training session runs there.
 
 ### Shared files
 

@@ -1,4 +1,5 @@
-// Whether this game is in a Steam lobby: clones and recording are offline only. shared/clone/hsm_clone_rules.h has the rule.
+// Whether this game is in a Steam lobby: clones are offline only (recording too, with record_online=0). shared/clone/hsm_clone_rules.h
+// has the rule.
 #pragma once
 #include <atomic>
 #include <cstdint>
@@ -15,6 +16,7 @@ public:
     // Game thread: asks Steam once a second whether the lobby is still there.
     void Tick(uint64_t nowMs);
     bool Offline() const;
+    bool Up() const { return started_; }   // Steam is there (in a lobby or not)
 private:
     bool Try(int waitedMs);
     bool Use(void* dll, bool startedHere);

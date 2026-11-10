@@ -1,4 +1,4 @@
-// When a clone may be in the game: which levels have fighters, and the Steam lobby rule. docs/CLONE.md.
+// When a clone may be in the game: which levels have fighters, the Steam lobby rule, and who the recorder's foe may be. docs/CLONE.md.
 #pragma once
 #include <algorithm>
 #include <cstdint>
@@ -16,6 +16,14 @@ inline uint64_t LobbyAfterPoll(uint64_t lobby, int members) { return members == 
 // Lobbies can only be seen through Steam, and Half Sword never starts it. Another mod may, so it gets a moment; then Fetch does.
 enum class SteamStep { Wait, Start, Use };
 inline SteamStep NextSteamStep(bool up, int waitedMs, int waitMs) { return up ? SteamStep::Use : waitedMs >= waitMs ? SteamStep::Start : SteamStep::Wait; }
+
+// Whose play the recorder keeps against: the nearest living fighter that may be the foe. Offline any of them may (the clone is team
+// 2, the player 1). In a Steam lobby HSMMod gives a teammate's stand-in my Team Int and a foe another, so one of my team is not the
+// foe. A Team Int that could not be read rules nothing out.
+constexpr int kTeamUnknown = -2147483647 - 1;
+inline bool MayBeFoe(bool online, int myTeam, int theirTeam) {
+    return !online || myTeam == kTeamUnknown || theirTeam == kTeamUnknown || theirTeam != myTeam;
+}
 
 // Menus have no fighters, and neither does the Tavern outside Free Mode.
 inline bool IsMenuLevel(const std::string& level) { return level.find("/Maps/Menus/") != std::string::npos || level.find("Map_Menu_") != std::string::npos; }

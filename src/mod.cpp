@@ -8,6 +8,7 @@
 #include "clone/hsm_clone_rules.h"
 #include "clone/hsm_fetch_menu.h"
 #include "log.h"
+#include "mod_link.h"
 #include "paths.h"
 #include "steam_lobby.h"
 #include "training.h"
@@ -37,6 +38,8 @@ constexpr char kDefaultIni[] =
     "record=0\r\n"
     "; record_clones=0 records nothing while a clone is in the fight. By default your fight against a clone is recorded too.\r\n"
     "record_clones=1\r\n"
+    "; record_online=0 records nothing in a Steam lobby (a multiplayer fight). By default your own play there is recorded too.\r\n"
+    "record_online=1\r\n"
     "; name= names that file (the menu's Record to sets it, and Rename renames it). Empty: your Steam name.\r\n"
     "name=\r\n"
     "; clone=<name>: offline, the clone in Clones/<name>.hsmmodel or .hsmclone joins each fight level. 1: the first there. 0: none.\r\n"
@@ -209,6 +212,7 @@ Config LoadConfig() {
     c.strikes = ReadIni(ini, L"strikes", L"1") != "0";
     c.parries = ReadIni(ini, L"parries", L"1") != "0";
     c.recordClones = ReadIni(ini, L"record_clones", L"1") != "0";
+    c.recordOnline = ReadIni(ini, L"record_online", L"1") != "0";
     const std::string weapon = ReadIni(ini, L"clone_weapon", L"kit");
     c.cloneWeapon = clone::ParseCloneWeapon(weapon);
     if (c.cloneWeapon == 0xFF) { HSM_LOG("fetch: clone_weapon=%s is not one Fetch knows; the clone keeps its kit", weapon.c_str()); c.cloneWeapon = clone::kCloneKit; }
@@ -235,7 +239,7 @@ Config LoadConfig() {
     return c;
 }
 
-// Asked only once Steam is up, which Offline() says. Only the two calls for this one name, so nothing of Steam's is held.
+// Asked only once Steam is up, which SteamLobby::Up() says. Only the two calls for this one name, so nothing of Steam's is held.
 std::string SteamName() {
     HMODULE steam = GetModuleHandleW(L"steam_api64.dll");
     if (!steam) return {};
@@ -252,6 +256,7 @@ public:
         keys_.Watch(cfg_.menuKey); keys_.Watch(cfg_.mindKey);
         style_.SetRecordClones(cfg_.recordClones);
         if (!cfg_.recordClones) HSM_LOG("fetch: record_clones=0: nothing is recorded while a clone is in the fight");
+        if (!cfg_.recordOnline) HSM_LOG("fetch: record_online=0: nothing is recorded in a Steam lobby");
     }
     SteamLobby lobby;
     // Worker thread, before the first tick.
@@ -259,6 +264,7 @@ public:
     bool CloneReady() const { return player_->ready(); }
 
     void Tick(UObject* gameMode, float dt) {
+        LinkTick();
         const bool changed = gameMode != lastMode_;
         if (changed) { FlushReflectionCache(); cloneWatch_.ForgetLevel(); }   // the old level's classes are gone
         if (!adapter_.Resolve(gameMode)) return;
@@ -275,9 +281,10 @@ public:
         adapter_.SetSubclassWeapons(true);
         lobby.Tick(GetTickCount64());
         const bool offline = lobby.Offline(), mayFight = fightLevel_ && offline;
+        if (lobby.Up() && !offline != online_) { online_ = !offline; if (online_) Joined(); }
         SwapLoadedClone();
         MergeDone();
-        if (!named_ && offline) {
+        if (!named_ && lobby.Up()) {   // the game may start straight into a lobby
             named_ = true;
             mine_ = SteamName();
             if (mine_.empty()) mine_ = "player";
@@ -287,7 +294,9 @@ public:
         const bool training = training_.running();
         if (cfg_.record || training) {
             if (training && !cfg_.record && !style_.on()) style_.SetOn(true);
-            style_.Tick(adapter_, adapter_.PlayerWillie(0), player_->fighter(), fightLevel_, !offline, dt, name_);
+            // Nothing until Steam says whose the play is (named_), and nothing in a lobby with record_online=0.
+            style_.Tick(adapter_, adapter_.PlayerWillie(0), player_->fighter(), fightLevel_, !offline, !named_ || (!offline && !cfg_.recordOnline), dt,
+                        name_);
         }
         training_.Tick(adapter_, style_, mayFight && adapter_.FreeModeActive() && !player_->inFight());
         if (training_.running() != training && !training_.running()) EndTraining();
@@ -296,13 +305,60 @@ public:
         if (!player_->watching()) cloneWatch_.Pause();
         MenuTick(offline);
         MindTick(offline);
+        if (const interop::FetchState f = LinkState(); !(f == told_)) { told_ = f; Link().Write(f); }   // HSMMod leaves its keys at once
         adapter_.TickDeferredDestroys();
     }
 private:
-    // Offline only, as the clones: in a Steam lobby another mod's chat may hold the keys.
+    // What HSMMod is told. The menu counts as open for a moment after it shuts: the Enter that chose Close, or Esc, is still
+    // down then, and HSMMod must not take that press for its chat key.
+    static constexpr ULONGLONG kMenuTailMs = 300;
+    interop::FetchState LinkState() const { return {menu_.open() || GetTickCount64() < menuTailUntil_, menu_.typing()}; }
+
+    // The link page with HSMMod (mod_link.h): Fetch's half out and HSMMod's in, every tick, before anything else (a level that
+    // will not resolve too, so the beat goes on). dt is real time: the game's own is slowed down with the fight.
+    void LinkTick() {
+        const ULONGLONG now = GetTickCount64();
+        const uint32_t dtMs = linkAt_ ? uint32_t(std::min<ULONGLONG>(now - linkAt_, 60000)) : 0;
+        linkAt_ = now;
+        told_ = LinkState();
+        Link().Tick(told_, dtMs);
+        const bool live = Link().live();
+        const interop::HsmState& h = Link().hsm();
+        if (live && (!hsmLive_ || h.syncMode != hsmMode_)) {
+            static constexpr const char* kModes[] = {"none yet", "owner", "host"};
+            HSM_LOG("fetch: HSMMod is here (sync mode %s): in its lobbies the Fetch menu opens, and keys it plays again are not recorded twice",
+                    kModes[size_t(h.syncMode) < 3 ? size_t(h.syncMode) : 0]);
+        } else if (!live && hsmLive_) {
+            HSM_LOG("fetch: HSMMod has gone quiet; in a Steam lobby the menu stays shut until it is back");
+        }
+        if (live && h.hostPlaysMine && !hostPlaysLogged_) {
+            hostPlaysLogged_ = true;
+            HSM_LOG("fetch: in this lobby the host's machine moves your fighter (HSMMod host sync); your keys are recorded as you press them");
+        }
+        hsmLive_ = live;
+        hsmMode_ = h.syncMode;
+    }
+
+    // A Steam lobby joined: a menu or overlay key that is also one of HSMMod's says so.
+    void Joined() {
+        for (const auto& [name, vk] : {std::pair<const char*, int>{"menu_key", cfg_.menuKey}, {"mind_key", cfg_.mindKey}})
+            if (const char* why = clone::HsmModKeyClash(vk))
+                HSM_LOG("fetch: %s=%s is also %s; in a lobby one press may do both. Another key in Fetch.ini avoids that", name,
+                        clone::MenuKeyName(vk).c_str(), why);
+    }
+
+    // Offline as always. In a Steam lobby only with HSMMod on the link and not typing in its chat (interop::FetchMenuMayOpen):
+    // HSMMod then leaves the menu's keys alone.
     void OpenMenu(bool offline) {
         UObject* me = adapter_.PlayerWillie(0);
-        if (!offline || clone::IsMenuLevel(level_) || !me || adapter_.IsDead(me) || adapter_.PauseMenuOpen()) return;
+        if (!interop::FetchMenuMayOpen(offline, Link().live(), Link().hsm())) {
+            if (lobby.Up() && !Link().live() && !shutTold_) {
+                shutTold_ = true;
+                HSM_LOG("fetch: menu stays shut in this lobby: HSMMod 0.8.0-pre44 or newer is needed for it");
+            }
+            return;
+        }
+        if (clone::IsMenuLevel(level_) || !me || adapter_.IsDead(me) || adapter_.PauseMenuOpen()) return;
         if (!ui::MenuCanShow()) { HSM_LOG("fetch: menu: no HUD on screen yet"); return; }
         settings_.record = cfg_.record;
         settings_.clone = cfg_.clone;
@@ -315,18 +371,20 @@ private:
         settings_.training = training_.running();
         settings_.recordTo = cfg_.name;
         settings_.mine = mine_;
+        settings_.online = !offline;
         clones_ = ListClones();
         recordings_ = ListRecordings();
         settings_.targetThere = FileThere(game::RecordingBase(name_) + L".hsmclone");
         menuNote_.clear();
         menu_.Open();
         adapter_.CaptureInput(true);   // the menu's keys do not reach the fighter
-        HSM_LOG("fetch: menu open (%zu clones in Clones/)", clones_.size());
+        HSM_LOG("fetch: menu open (%zu clones in Clones/)%s", clones_.size(), offline ? "" : " in a Steam lobby: the clone rows are offline only");
     }
 
     // giveBack false: the game's own screen (the death screen) has taken the input mode, and keeps it.
     void CloseMenu(bool giveBack = true) {
         menu_.Close();
+        menuTailUntil_ = GetTickCount64() + kMenuTailMs;
         if (giveBack) adapter_.CaptureInput(false);
         ui::MenuTick(false, {});
         HSM_LOG("fetch: menu closed");
@@ -360,7 +418,12 @@ private:
         else if (keys_.Pressed(cfg_.menuKey)) { if (menu_.open()) CloseMenu(); else OpenMenu(offline); }
         else if (menu_.open()) Apply(menu_.Key(keys_.Nav(), settings_, clones_, recordings_));
         if (!menu_.open()) return;
-        if (!offline) { CloseMenu(); return; }
+        settings_.online = !offline;   // a lobby joined or left with the menu open
+        if (interop::FetchMenuMustClose(offline, Link().live(), Link().hsm())) {
+            HSM_LOG("fetch: menu closes: %s", Link().live() ? "HSMMod's chat is open" : "no HSMMod in this Steam lobby");
+            CloseMenu();
+            return;
+        }
         if (UObject* me = adapter_.PlayerWillie(0); !me || adapter_.IsDead(me)) { CloseMenu(false); return; }
         if (!ui::MenuCanShow()) { CloseMenu(); return; }   // the HUD went (a level change, a death screen): the keys go back
         ui::MenuTick(true, View());
@@ -537,6 +600,7 @@ private:
 
     // Only in a Free Mode fight, offline, with no clone in it (the menu says why not on its status line).
     void StartTraining() {
+        if (!lobby.Offline()) { trainingNote_ = "Training: offline only"; return; }
         if (!fightLevel_ || !adapter_.FreeModeActive()) { trainingNote_ = "Training: only in a Free Mode fight"; return; }
         if (player_->inFight()) player_->Despawn(adapter_);   // the clone goes for the session
         trainingNote_.clear();
@@ -627,6 +691,12 @@ private:
     UObject* lastMode_ = nullptr;
     std::string level_, name_, mine_;   // name_: the recording play goes into; mine_: the player's own (Steam) name
     bool named_ = false;
+    bool online_ = false;               // in a Steam lobby, as the last tick saw it (Joined)
+    // The link with HSMMod: when it was last ticked, Fetch's half as last written, and what the log has said of HSMMod.
+    ULONGLONG linkAt_ = 0, menuTailUntil_ = 0;
+    interop::FetchState told_;
+    bool hsmLive_ = false, hostPlaysLogged_ = false, shutTold_ = false;
+    interop::SyncMode hsmMode_ = interop::SyncMode::None;
     std::string menuNote_;              // what the last Rename came to
     // The Merge page's merge, on a thread of its own (StartMerge), until MergeDone takes its result.
     std::thread merger_;
@@ -662,6 +732,7 @@ DWORD WINAPI Main(void*) {
     if (!cfg.clone.empty()) mod->LoadClone();
     if (!cfg.record && !mod->CloneReady() && !menu) { HSM_LOG("fetch: no clone to fight, record=0 and menu_key=0: nothing hooked"); return 0; }
     if (!Init()) { HSM_LOG("fetch: this game build is not supported; the game continues unmodified"); return 0; }
+    Link().Map();   // before the first tick, and kept: HSMMod may look for it any time
     const bool steam = mod->lobby.Start();
     g_mod = mod;
     HookFunctionsMatching([](const std::string& n) { return n == "ReceiveTick"; }, [](UObject* obj, UFunction* fn, void* params) {
