@@ -12,6 +12,16 @@
 #include <vector>
 
 namespace hsm::game {
+// True while the clone presses a key of its own (ClonePlayer, ClonePress). The recorder never takes those for the player's:
+// the clone's keys are game functions on its fighter and what it carries, the same ones the player's are.
+inline bool& ClonePressing() { static bool on = false; return on; }
+struct ClonePress {
+    ClonePress() { ClonePressing() = true; }
+    ~ClonePress() { ClonePressing() = false; }
+    ClonePress(const ClonePress&) = delete;
+    ClonePress& operator=(const ClonePress&) = delete;
+};
+
 class Adapter;
 
 // The clone a clone= value means: Clones/<value> without its extension, or for "1" the first one there (a model before a recording;
@@ -30,9 +40,11 @@ public:
     ~StyleRecorder() { Flush(); }
     StyleRecorder(const StyleRecorder&) = delete;
     StyleRecorder& operator=(const StyleRecorder&) = delete;
-    // Per GameMode tick, game thread. clone: a style clone in this fight (nothing is written then: a clone is not the player's
-    // own opponent to learn from). paused: keep nothing (a Steam lobby). name: the file's, on the first write.
+    // Per GameMode tick, game thread. clone: a style clone in this fight. It is recorded as any foe is, unless record_clones=0
+    // (SetRecordClones). paused: keep nothing (a Steam lobby). name: the file's, on the first write.
     void Tick(Adapter& adapter, ue::UObject* me, ue::UObject* clone, bool fightLevel, bool paused, float dt, const std::string& name);
+    // Fetch.ini record_clones=: whether play while a clone is in the fight is recorded. Game thread.
+    void SetRecordClones(bool on) { recordClones_ = on; }
     // The menu's record switch: off writes what is kept and stops; on starts again (the same file). Game thread.
     void SetOn(bool on);
     // The menu's Record to: what is kept goes into the file it was going to; the next play goes into the one of the name the next
@@ -76,6 +88,7 @@ private:
     std::vector<std::string> keysSeen_;   // the keys of things other than the fighter logged once each (a few)
     FightWatch watch_{[this](const clone::FightEvent& e) { collector_.Note(e); }, [this] { return live_; }};
     clone::Tally tally_;
+    bool recordClones_ = true, cloneLogged_ = false;
     size_t counted_ = 0;             // the collector's pending events tally_ has seen
 };
 

@@ -124,6 +124,7 @@ void ClonePlayer::ResetBrain(float yaw) {
 }
 
 void ClonePlayer::LetGo(Adapter& a, UObject* w) {
+    const game::ClonePress press;
     for (Action act : input_.ReleaseAll().released) a.FireAction(w, act, false);
     if (replay_) { replay_->ReleaseKeys(); PlayKeys(a, w, replay_->TakeKeys()); }
 }
@@ -131,6 +132,7 @@ void ClonePlayer::LetGo(Adapter& a, UObject* w) {
 // A key of something the player carried: pressed on the same kind of thing the clone carries, if it has one. Never on a fighter.
 void ClonePlayer::PlayKeys(Adapter& a, UObject* w, const std::vector<uint16_t>& keys) {
     if (keys.empty()) return;
+    const game::ClonePress press;
     const std::vector<UObject*> carried = a.CarriedActors(w);
     for (uint16_t k : keys) {
         const clone::Db::Key& key = db_.keys()[k];
@@ -187,6 +189,7 @@ void ClonePlayer::Duel(Adapter& a, UObject* me, uint32_t now) {
 // The clone is driven as a remote fighter: inputs in, the body's own physics out.
 void ClonePlayer::Drive(Adapter& a, UObject* w, float dt) {
     if (!a.BindInputs(w)) return;
+    const game::ClonePress press;
     input_.Target(w);
     InputApplier::Step s = input_.Tick(dt * 1000.f);
     // The camera lock flips this machine's own setting, the middle mouse button runs a debug damage trace.

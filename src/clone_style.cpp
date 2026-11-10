@@ -127,7 +127,7 @@ void StyleRecorder::Hook(Adapter& adapter, UObject* me) {
     for (const auto& [fn, b] : adapter.Bindings()) {
         const InputBinding bind = b;
         HookFunction(fn, [this, bind](UObject* obj, UFunction* f, void* params) {
-            if (!obj || obj != me_) return false;
+            if (!obj || obj != me_ || ClonePressing()) return false;
             if (bind.isAxis) input_.OnAxis(Axis(bind.index), Adapter::ReadAxisParam(f, params));
             else input_.OnAction(Action(bind.index), bind.pressed);
             return false;
@@ -136,7 +136,7 @@ void StyleRecorder::Hook(Adapter& adapter, UObject* me) {
     // Every other key: one bound on anything but a fighter (a mod's gun, say) goes in the recording by its class and function, so
     // a clone carrying the same thing presses it too (hsm_clone_input.h). The fighter's own keys are the samples.
     HookFunctionsMatching([](const std::string& n) { return n.rfind("InpActEvt_", 0) == 0; }, [this](UObject* obj, UFunction* f, void*) {
-        if (!obj || !on_ || !live_ || !me_ || IsA(obj, ClassOf(me_))) return false;
+        if (!obj || !on_ || !live_ || !me_ || ClonePressing() || IsA(obj, ClassOf(me_))) return false;
         const std::string cls = ObjectName(reinterpret_cast<UObject*>(ClassOf(obj))), fn = ObjectName(reinterpret_cast<UObject*>(f));
         const bool kept = collector_.NoteKey(cls, fn);
         const std::string key = cls + "." + fn;
@@ -227,9 +227,11 @@ void StyleRecorder::Tick(Adapter& adapter, UObject* me, UObject* clone, bool fig
     const double now = SteadyMs();
     if (now >= nextFoeMs_) { nextFoeMs_ = now + kFindFoeMs; FindFoe(adapter, me); }
     const bool foeThere = foe_ && adapter.StillValid(foe_, foeIndex_);
-    if (foeThere && !paused && !clone) watch_.Read(me, foe_);   // before the check below: a death is the last event of a fight
+    const bool skip = clone && !recordClones_;   // record_clones=0: nothing while a clone is in, as before pre13
+    if (foeThere && !paused && !skip) watch_.Read(me, foe_);   // before the check below: a death is the last event of a fight
     else watch_.Pause();
-    if (!foeThere || adapter.IsDead(foe_) || adapter.IsDead(me) || paused || clone) { collector_.Break(); CountNew(); return; }
+    if (!foeThere || adapter.IsDead(foe_) || adapter.IsDead(me) || paused || skip) { collector_.Break(); CountNew(); return; }
+    if (clone && foe_ == clone && !cloneLogged_) { cloneLogged_ = true; HSM_LOG("clone: recording your fight against the clone too (record_clones=0 stops it)"); }
     if (!Open(name)) { on_ = false; return; }
     if (!kitSeen_) {   // once a level: the kit the clone will wear is the one last fought in
         kitSeen_ = true;

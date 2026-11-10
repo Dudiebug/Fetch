@@ -20,6 +20,7 @@ The first start writes `Fetch.ini` next to the exe and logs to `Fetch.log`. This
 | Key under `[fetch]` | Meaning |
 |---|---|
 | `record=1` | Writes how you fight to `Clones/<name>.hsmclone`, about 22 MB an hour. Later sessions add to the same file. |
+| `record_clones=1` | Your fight against a clone (yours or anyone's) is recorded too, as against any foe. `0`: nothing is kept while a clone is in, as before pre13. |
 | `name=` | The file's name. Empty: your Steam name. The menu's "Record to" sets it, and "Rename this recording" changes it. |
 | `clone=<name>` | Offline, the clone called `<name>` in `Clones/` joins each fight level, 5 m ahead of you. `1`: the first one there. `0`: none. |
 | `duel=0` | Keeps Free Mode's own fighters in the fight. By default they are removed while a clone is in. |
@@ -131,7 +132,8 @@ overlay on)`. With the panel off the clone picks exactly as before; with it on i
 the recorded player's input, the ones that best fit the fight it is in.
 
 1. **Record.** Set `record=1` (or "Record my fighting" in the menu) and fight. Only play near a living foe is kept. Nothing is kept
-   while in a Steam lobby or while fighting a clone.
+   while in a Steam lobby. Fighting a clone, your own included, is recorded like any fight (pre13 on; `record_clones=0` turns it
+   off): it is your play, and the clone is the foe. The clone's own keys are never taken for yours.
 2. **Share.** Send the `.hsmclone` from `Clones/`. It grows with play, about 22 MB an hour. It holds the name, the last kit fought in,
    and the recording. The mod uploads nothing.
 3. **Fight.** Put the file in `Clones/`, set `clone=Ana` (or pick it in the menu's "Clone to fight"), and start an offline fight.

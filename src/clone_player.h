@@ -29,6 +29,7 @@ struct Config {
     int mindKey = 0xBB;       // mind_key=: shows or hides the clone-thinking overlay ('='); 0: no key
     bool strikes = true;      // Deal Complex Damage is watched for Strike events (a script VM hook)
     bool parries = true;      // StopThatBlade is watched for Parried events (likewise)
+    bool recordClones = true; // record_clones=: play against a clone (or with one in the fight) is recorded too
     uint8_t cloneWeapon = hsm::clone::kCloneKit;   // clone_weapon=: what the clone holds as it comes in (hsm_clone_drill.h)
     uint8_t drill = 0;        // drill=: a training session's kind, 0 full tour, 1 fill gaps
     int drillMinutes = 20;    // drill_minutes=

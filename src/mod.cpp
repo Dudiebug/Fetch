@@ -35,6 +35,8 @@ constexpr char kDefaultIni[] =
     "[fetch]\r\n"
     "; record=1 writes how you fight to Clones/<name>.hsmclone next to the game, about 25 MB an hour.\r\n"
     "record=0\r\n"
+    "; record_clones=0 records nothing while a clone is in the fight. By default your fight against a clone is recorded too.\r\n"
+    "record_clones=1\r\n"
     "; name= names that file (the menu's Record to sets it, and Rename renames it). Empty: your Steam name.\r\n"
     "name=\r\n"
     "; clone=<name>: offline, the clone in Clones/<name>.hsmmodel or .hsmclone joins each fight level. 1: the first there. 0: none.\r\n"
@@ -206,6 +208,7 @@ Config LoadConfig() {
     c.brain = clone::ParseBrain(ReadIni(ini, L"brain", L"auto"));
     c.strikes = ReadIni(ini, L"strikes", L"1") != "0";
     c.parries = ReadIni(ini, L"parries", L"1") != "0";
+    c.recordClones = ReadIni(ini, L"record_clones", L"1") != "0";
     const std::string weapon = ReadIni(ini, L"clone_weapon", L"kit");
     c.cloneWeapon = clone::ParseCloneWeapon(weapon);
     if (c.cloneWeapon == 0xFF) { HSM_LOG("fetch: clone_weapon=%s is not one Fetch knows; the clone keeps its kit", weapon.c_str()); c.cloneWeapon = clone::kCloneKit; }
@@ -245,7 +248,11 @@ std::string SteamName() {
 
 class Mod {
 public:
-    explicit Mod(const Config& c) : cfg_(c) { keys_.Watch(cfg_.menuKey); keys_.Watch(cfg_.mindKey); }
+    explicit Mod(const Config& c) : cfg_(c) {
+        keys_.Watch(cfg_.menuKey); keys_.Watch(cfg_.mindKey);
+        style_.SetRecordClones(cfg_.recordClones);
+        if (!cfg_.recordClones) HSM_LOG("fetch: record_clones=0: nothing is recorded while a clone is in the fight");
+    }
     SteamLobby lobby;
     // Worker thread, before the first tick.
     void LoadClone() { player_->Load(cfg_); }

@@ -249,3 +249,14 @@ Fetch alone first, `record=1`. Send `Fetch.log` and `Clones/<your name>.hsmclone
     under, the one played marked `>`. Then compare the log's `clone: N looks in 30 s, X ms each on average, Y ms at most` with
     the overlay on and off, on your largest recording: the average with it on is under 1 ms more, and the frame rate does not
     change with it off. Send both lines.
+
+### Recording against a clone (pre13) — PENDING — HUMAN TESTING
+
+81. With `record=1` and a clone of your own recording (`clone=<you>`, recording into the same name), fight the clone for a minute.
+    Expected: `clone: recording your fight against the clone too (record_clones=0 stops it)` once. While you fight it, the menu
+    reads "Recording now into ...", its play kept and the file's size go up, and the tally counts your hits on the clone.
+    Stand still and let it swing at you: only your own keys are kept (`hsmclone.py info`: no keys of the clone's, and no `clone:
+    recording the key ...` line for what the clone carries). Kill it: nothing is kept while it lies down, and the next one is recorded again. Do the same with a clone of
+    someone else's recording, and with `duel=0` (Free Mode's fighters in too): play near whichever foe is nearest is kept.
+82. Set `record_clones=0` and restart. Expected: `fetch: record_clones=0: nothing is recorded while a clone is in the fight`, and the
+    file does not grow while the clone is in, as in pre12. Load a recording made in step 81 in pre12: it loads as before.
