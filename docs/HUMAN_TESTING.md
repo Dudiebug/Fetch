@@ -169,3 +169,83 @@ Fetch alone first, `record=1`. Send `Fetch.log` and `Clones/<your name>.hsmclone
 61. Train on a recording made with pre11 (after 52 to 57). Expected: a model of version 5 that loads and fights. Fight a clone of
     someone who fights plate and bare foes differently: say whether the clone does too. A model trained with pre8 or pre9 (version 4) and `all.hsmmodel` (version 3)
     still load and fight as before.
+
+### Mouse sensitivity and every other key (pre12) — PENDING — HUMAN TESTING
+
+62. Set the game's mouse sensitivity to something far from 1 (say 2.5), record a minute of fighting, then set it to 0.5. Expected:
+    `clone: recording at mouse sensitivity 2.50` when you start and `... 0.50` after the change. `hsmclone.py info` on the file
+    lists both.
+63. Fight a clone of that recording, with your sensitivity at 0.5. Expected: `clone: its mouse plays at the recorder's sensitivity
+    2.50 (yours: 0.50)`, and its swings are as wide and fast as at 2.5, not a fifth of that. Then fight a recording made with pre11
+    at a sensitivity you know: `keeps no mouse sensitivity (it is from before pre12), but its turns show X.XX`, where X.XX is the
+    setting it was made at, and its swings are as wide as the recorder's. The same file still loads in pre11, as before.
+64. With a mod that adds a weapon or item worked by a key of its own (a gun's fire key, say), record yourself using it. Expected:
+    `clone: recording the key InpActEvt_... of <class>` once per key. Your fighter's own keys (W, Shift, grabs) give no such lines; a key
+    of the game's own controller or menus may, and is never played.
+65. Fight a clone of that recording holding the same item (`clone_weapon=kit`). Expected: `clone: plays the key ... as the recording
+    did`, and the item does what it did for you at those moments. With the item not in its hands: `the clone carries no such
+    thing`, and nothing else changes. A key held down (aim, say) is let go when the clone goes down.
+66. Fight a clone of a pre11 recording and one of a model. Expected: no key lines, and both play as before.
+
+### Parries (pre12) — PENDING — HUMAN TESTING
+
+67. With `record=1`, fight a Free Mode foe and hold your guard up as they swing. Expected: `clone: parries: watching StopThatBlade
+    (1 function)` once, and `clone: parry: me caught the foe's blade (R hand) speed=... full=... catches=...` lines as their blows
+    meet your weapon (the first 12 of each level). The menu's tally shows `Parries: N made, M taken`, and `M taken` goes up when
+    they block your blows. Say whether the count matches what you saw.
+68. Run `tools/hsmclone.py info` on that recording. Expected: `parries: N made, M taken (K full)`, and `Parried` in the events
+    list. Then load the same file in pre11 (or fight a clone of it there): it loads and plays as before.
+69. Set `parries=0`. Expected: `fetch: parries=0: no Parried events`, no parry lines, and the tally's parries stay at 0.
+
+### Naming recordings and recording into one (pre12) — PENDING — HUMAN TESTING
+
+70. With `record=1`, open the menu, go to "Record to", press D until it shows New..., press Enter and type `Duel 1` (W, A, S and D
+    included: type `Swords`, then erase it with Backspace). Expected: the letters show on the row as you type, your fighter does not
+    move, and Enter logs `fetch: recording into Clones/Duel_1.hsmclone (a new file, made by the first fight)`. Fight: the file
+    appears, the status line reads `Recording now into Duel_1`, and `Fetch.ini` has `name=Duel 1`.
+71. In the same session, choose your own name again in "Record to" and fight. Expected: `fetch: recording into Clones/<you>.hsmclone`,
+    and the next play goes into that file (its size grows, `Duel_1.hsmclone` does not). Restart the game: "Record to" still shows it.
+72. Choose `Duel 1`, then "Rename this recording", erase and type `Sword Duel`, Enter. Expected: `fetch: renamed Clones/Duel_1.hsmclone
+    to Sword_Duel.hsmclone`, the status line says `Renamed ...`, the file (and a `.hsmmodel` of it, if you trained one) has the new
+    name, and `tools/hsmclone.py info Clones/Sword_Duel.hsmclone` shows the name `Sword Duel`. Pick it in "Clone to fight": the clone
+    loads under the new name. Load it in pre11 too: it loads, with the new name.
+73. Type a name and press Esc. Expected: nothing changes. Then try `con` (refused: "Windows keeps that name"), a name of a recording
+    there (in Rename: refused, "There is a recording of that name already"), and Rename in the middle of a fight (refused). Type
+    a long name fast: every letter lands, and it stops at 32.
+
+### Merging clones (pre12) — PENDING — HUMAN TESTING
+
+74. With two recordings or more in `Clones/` (record into two names, steps 70–71, or copy a friend's in), open the menu, go to
+    "Merge recordings", Enter. Expected: the page lists every recording, all 16 lines fit on screen at 720p and 1080p, and W/S
+    scroll it ("N more below"). Pick two (each shows `[1]`, `[2]`), Enter on "Make it" before naming: refused ("name it first").
+    Name it `Both`, then "Make it". Expected: `fetch: merging 2 recordings into Clones/Both.hsmclone`, the status line shows
+    "Merging: ...", then "Made Both: m:ss of play from 2 recordings. Train it with train.bat", and the log has `fetch: made
+    Clones/Both.hsmclone: ...`, the play adding up to both. The fight does not stutter while it merges. "Clone to fight" lists
+    `Both`: pick it and fight. Expected: the clone wears the first one's kit and fights. `tools/hsmclone.py info
+    Clones/Both.hsmclone` shows `Both` and a "play of:" line with both names. Pick the recording you are recording into as one of
+    them: it merges with what was kept so far. Try `Both` again: refused, nothing is overwritten. Load `Both.hsmclone` in pre11:
+    it loads, as `Both`.
+75. Run `train.bat`, press `M`, type the numbers of two recordings and the name `Both 2`. Expected: `merging 1 of 2` ... and a
+    line with the hours of play and the names, then "Train it now?": Y trains it. In game, pick `Both_2` with `brain=model`:
+    the model fights.
+76. Drag two `.hsmclone` files onto `merge.bat` at once and type `Both 3`. Expected: `Both_3.hsmclone` beside the first file, and
+    "Made ...". One file only: it asks for two. A name that is taken: asked again.
+
+### Watching the clone think (pre12) — PENDING — HUMAN TESTING
+
+77. Fight a `.hsmclone` clone (`brain=replay`), open the menu, turn "Show the clone thinking" ON and close the menu. Expected: `fetch:
+    menu: Show the clone thinking is now ON`, `show_mind=1` in `Fetch.ini`, `fetch: mind: the overlay is on UI_HUD`, and a panel on
+    the left with "THE CLONE THINKING", the move, "from <name>", a time that counts up, and a reason that changes between *best
+    match* and *kept playing*. The map and the bars change about five times a second. Open the menu: the panel hides; close it: it
+    comes back. Die or change level: it comes back with the next clone, and nothing crashes. Press `=` in the fight: `fetch: the
+    clone-thinking overlay is OFF (its key, =)` and the panel goes; `=` again brings it back. `=` does nothing to the game itself
+    (no other action fires), and typing a name in the menu with `=` pressed does not turn it.
+78. Circle the clone. Expected: the white square moves left and right across the map, and the dots follow it; one is ringed. Step
+    back: the square rises. Fight a merged clone (step 74): two colours of dots, and the two names above the map in those colours.
+    Get behind the clone: *turning to face*, and no ring while it turns.
+79. Hit the clone while it plays a move, and let it repeat a move. Expected: a bar marked `x4 hurt`, and now and then one marked `x2
+    again`; the bar of the move playing is often marked `75% stay`.
+80. Fight a model clone (`brain=model`). Expected: no map, up to five bars of moves with percentages that add up to 100% or a little
+    under, the one played marked `>`. Then compare the log's `clone: N looks in 30 s, X ms each on average, Y ms at most` with
+    the overlay on and off, on your largest recording: the average with it on is under 1 ms more, and the frame rate does not
+    change with it off. Send both lines.

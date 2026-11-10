@@ -27,6 +27,12 @@ std::wstring BaseInClones(const std::string& stem) { return ModFilePath((kDir + 
 std::wstring InClones(const std::string& stem) { return BaseInClones(stem) + L".hsmclone"; }
 
 // Where the last whole block ends: a block cut by a crash must not sit in front of what is written next.
+long long GoodEnd(FILE* f, long long size);
+
+std::vector<uint8_t> NameBlock(const std::string& name) {
+    return clone::EncodeBlock(clone::Block::Name, reinterpret_cast<const uint8_t*>(name.data()), std::min(name.size(), clone::kMaxName * 4));
+}
+
 long long GoodEnd(FILE* f, long long size) {
     long long p = (long long)(clone::FileHeader().size());
     while (size - p >= 9) {
@@ -40,6 +46,24 @@ long long GoodEnd(FILE* f, long long size) {
     return p;
 }
 }  // namespace
+
+std::wstring RecordingBase(const std::string& name) { return BaseInClones(clone::FileStem(name)); }
+
+bool AppendNameBlock(const std::wstring& path, const std::string& name) {
+    FILE* f = _wfopen(path.c_str(), L"r+b");
+    if (!f) return false;
+    const std::vector<uint8_t> header = clone::FileHeader();
+    uint8_t got[64] = {};
+    const size_t n = std::fread(got, 1, header.size(), f);
+    bool ok = clone::IsFileHeader(got, n) && !_fseeki64(f, 0, SEEK_END);
+    if (ok) {
+        const long long size = _ftelli64(f), end = GoodEnd(f, size);
+        if (end != size) { HSM_LOG("clone: a cut block at the end of the file is dropped"); _chsize_s(_fileno(f), end); }
+        const std::vector<uint8_t> b = NameBlock(name);
+        ok = !_fseeki64(f, end, SEEK_SET) && std::fwrite(b.data(), 1, b.size(), f) == b.size();
+    }
+    return std::fclose(f) == 0 && ok;
+}
 
 std::wstring CloneFileBase(const std::string& value) {
     if (value != "1") return BaseInClones(clone::FileStem(value));
@@ -90,6 +114,13 @@ void StyleRecorder::SetOn(bool on) {
     HSM_LOG("clone: recording off");
 }
 
+void StyleRecorder::Retarget() {
+    Flush();
+    collector_.Break();
+    opened_ = false; path_.clear(); size_ = 0; kitSeen_ = false;
+    kit_.clear();   // the new file gets the kit too
+}
+
 void StyleRecorder::Hook(Adapter& adapter, UObject* me) {
     if (hooked_ || !adapter.BindInputs(me)) return;
     hooked_ = true;
@@ -102,8 +133,21 @@ void StyleRecorder::Hook(Adapter& adapter, UObject* me) {
             return false;
         });
     }
+    // Every other key: one bound on anything but a fighter (a mod's gun, say) goes in the recording by its class and function, so
+    // a clone carrying the same thing presses it too (hsm_clone_input.h). The fighter's own keys are the samples.
+    HookFunctionsMatching([](const std::string& n) { return n.rfind("InpActEvt_", 0) == 0; }, [this](UObject* obj, UFunction* f, void*) {
+        if (!obj || !on_ || !live_ || !me_ || IsA(obj, ClassOf(me_))) return false;
+        const std::string cls = ObjectName(reinterpret_cast<UObject*>(ClassOf(obj))), fn = ObjectName(reinterpret_cast<UObject*>(f));
+        const bool kept = collector_.NoteKey(cls, fn);
+        const std::string key = cls + "." + fn;
+        if (keysSeen_.size() < 32 && std::find(keysSeen_.begin(), keysSeen_.end(), key) == keysSeen_.end()) {
+            keysSeen_.push_back(key);
+            HSM_LOG("clone: %s the key %s of %s", kept ? "recording" : "cannot record", fn.c_str(), cls.c_str());
+        }
+        return false;
+    });
     watch_.Hook();
-    HSM_LOG("clone: recording how this player fights, and the fight's events");
+    HSM_LOG("clone: recording how this player fights, the fight's events, and the keys of what the player carries");
 }
 
 void StyleRecorder::FindFoe(Adapter& adapter, UObject* me) {
@@ -144,7 +188,7 @@ bool StyleRecorder::Open(const std::string& name) {
     }
     path_ = path;
     std::vector<uint8_t> first = header;
-    const std::vector<uint8_t> n = clone::EncodeBlock(clone::Block::Name, reinterpret_cast<const uint8_t*>(name.data()), std::min(name.size(), clone::kMaxName * 4));
+    const std::vector<uint8_t> n = NameBlock(name);
     first.insert(first.end(), n.begin(), n.end());
     Append(first);
     return !path_.empty();
@@ -191,6 +235,15 @@ void StyleRecorder::Tick(Adapter& adapter, UObject* me, UObject* clone, bool fig
         kitSeen_ = true;
         std::vector<uint8_t> kit;
         if (adapter.ExportPassport(kit) && kit != kit_) { kit_ = std::move(kit); Append(clone::EncodeBlock(clone::Block::Kit, kit_.data(), kit_.size())); }
+    }
+    float sens = 0; bool invert = false;   // the mouse axes are kept before the game scales them: the scale goes with them
+    if (adapter.MouseLook(sens, invert)) {
+        const clone::LookScale look = clone::MakeLook(sens, invert);
+        if (look.known() && !(look == collector_.look())) {
+            if (collector_.samples()) Flush();
+            collector_.SetLook(look);
+            HSM_LOG("clone: recording at mouse sensitivity %.2f%s", look.sens, look.invert ? ", inverted" : "");
+        }
     }
     clone::Played p{dt * 1000.f, f.axes, f.buttons, 0, 0};
     if (!adapter.ControlRotation(0, p.yaw, p.pitch)) { collector_.Break(); CountNew(); return; }

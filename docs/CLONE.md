@@ -20,15 +20,18 @@ The first start writes `Fetch.ini` next to the exe and logs to `Fetch.log`. This
 | Key under `[fetch]` | Meaning |
 |---|---|
 | `record=1` | Writes how you fight to `Clones/<name>.hsmclone`, about 22 MB an hour. Later sessions add to the same file. |
-| `name=` | The file's name. Empty: your Steam name. |
+| `name=` | The file's name. Empty: your Steam name. The menu's "Record to" sets it, and "Rename this recording" changes it. |
 | `clone=<name>` | Offline, the clone called `<name>` in `Clones/` joins each fight level, 5 m ahead of you. `1`: the first one there. `0`: none. |
 | `duel=0` | Keeps Free Mode's own fighters in the fight. By default they are removed while a clone is in. |
 | `brain=auto` | `auto` uses the `.hsmmodel` if there is one, else the `.hsmclone`. `model` or `replay` prefer that one. |
 | `menu_key=;` | The key that opens the Fetch menu in game: a letter, a digit 1 to 9, F1 to F12 or `;`. `0`: no menu. P (the game's pause key) and W, A, S, D (the menu's own keys) are refused, and `;` is used and written back. |
 | `strikes=1` | Reads how each blow met skin or armour (below). `0` turns it off. It only watches the game's damage function and changes nothing. |
+| `parries=1` | Reads each parry (below). `0` turns it off. It only watches the game's parry function and changes nothing. |
 | `clone_weapon=kit` | What the clone holds when it comes in. `kit`: what its recording held. `random`: a weapon type it has moves for, new each time. `match`: your weapon's type, if it has moves for it. Or one type: `sword1h`, `sword2h`, `mace1h`, `mace2h`, `axe1h`, `axe2h`, `polearm`. |
 | `drill=tour` | The kind of training session (below): `tour` or `gaps`. |
 | `drill_minutes=20` | A training session's length, 5 to 60 minutes. |
+| `show_mind=0` | `1` shows the clone thinking while it fights (below). The menu's "Show the clone thinking" and the `=` key set it. |
+| `mind_key==` | The key that shows or hides it in game: `=` by default, or a letter, a digit, F1 to F12 or `;`. `0`: no key. |
 
 ## The menu (;)
 
@@ -37,6 +40,8 @@ In a fight, press `;` (the key right of L on a US keyboard). A panel opens in th
 | Row | Left / right, or Enter |
 |---|---|
 | Record my fighting | Turns recording on or off. Off writes what was kept first. |
+| Record to | The recording your play goes into: your own (your Steam name), each recording in `Clones/`, or New... Enter on New... types a name (below). The next fight goes into the one chosen. |
+| Rename this recording | Enter types a new name for the recording chosen in Record to (below). |
 | Clone to fight | Steps through the clones in `Clones/` (and none). The new one is read in the background, then replaces the one in the fight. |
 | Clone brain | `auto`, `model` or `replay`, as `brain=`. The clone is read again. |
 | One on one | As `duel=`. |
@@ -44,17 +49,81 @@ In a fight, press `;` (the key right of L on a US keyboard). A panel opens in th
 | Clone's weapon | As `clone_weapon=`: its own kit, random, the same as mine, or one weapon type. It takes effect when the next clone comes in. |
 | Training session | Left / right: full tour or fill gaps. Enter starts a session, or stops the one running. |
 | Session length | 5 to 60 minutes, in steps of 5. |
+| Merge recordings | Enter opens a page that merges recordings into one new clone (below). |
+| Show the clone thinking | As `show_mind=`: a panel on the left that shows how the clone picks its moves (below). `=` does the same outside the menu. |
 | Close | Enter closes the menu. |
 
 W/S or the arrow keys choose a row, A/D or the arrows change it, Enter or Space changes it forwards or runs it, and `;` or Esc closes
 the menu. Every change is written to `Fetch.ini` at once, so it holds next time. Under the rows the menu shows how long recording
-has kept play and the file's size, the fight's tally since the game started (hits landed and taken, clashes, parries, damage dealt
+has kept play and the file's size, the fight's tally since the game started (hits landed and taken, clashes, parries made and taken, damage dealt
 and taken, kills, deaths), how your blows met the foe's armour, what the clone is doing, and the training session. The menu does not
 pause the game.
 
 The menu opens only offline (as the clones fight), with your fighter alive and the game's HUD on screen: not in the main menu, not
 over the pause menu, not in a Steam lobby. It closes by itself when you die, when the HUD goes (a level change), or when you join a
 lobby.
+
+### Naming your recordings
+
+Each recording is a file of its own in `Clones/`, so you can keep several: one per weapon, say, or one for a friend who plays on
+your machine. In the menu, "Record to" chooses which one your play goes into, and New... makes one. While you type a name the keys
+are letters: W, A, S and D type, and nothing moves. Letters, digits, spaces, `-` and `_` go in, up to 32 of them. Backspace erases,
+Enter keeps the name, and Esc leaves things as they were. A space is `_` in the file's name. The file is made by the first fight
+recorded into it, and a training session records into it too. The choice is `name=` in `Fetch.ini`.
+
+"Rename this recording" renames the one chosen: its file, its model (`.hsmmodel`) if it has one, and the name inside it, which is
+the name the clone shows. The new name goes on the end of the file, so every Fetch, old or new, reads the new name and the rest as
+before. It does not rename onto another recording, or in the middle of a recorded fight. If "Clone to fight" was that recording, it
+follows. Names Windows keeps for itself (`CON`, `NUL`, `COM1` and the like) are refused.
+
+### Merging clones
+
+Several recordings can be merged into one new clone: yours and a friend's, say, or one per weapon. The clone then picks its moves
+from all of them. The recordings themselves are not changed.
+
+- **In the menu:** "Merge recordings", Enter. The page lists the recordings in `Clones/`. Enter (or A/D) picks one, or unpicks it;
+  the number beside it is its place in the merge. Then "Name of the new clone", Enter, type a name as above, Enter, and "Make it".
+  The status line shows how far it has got ("Merging: reading 2 of 3..."), then "Made Sword_Duels: 1:12:05 of play from 3
+  recordings". The new clone is in "Clone to fight" at once. Esc goes back to the first page. A recording being recorded into can
+  be picked: what it has kept so far goes in.
+- **On the desktop:** `train.bat`, then `M`, the numbers of the recordings (`1 3 4`) and a name. It offers to train the new clone
+  straight after. Or drop two recordings or more on `merge.bat`, all at once, and type a name: the new clone goes beside the first.
+  Both run `clonetrain --merge OUT.hsmclone NAME IN.hsmclone IN.hsmclone...`.
+
+The order picked is the merge order. The clone looks like the first one picked that has a look saved (its last kit). Each player's
+mouse sensitivity, and what they did, stay their own: `tools/hsmclone.py info` lists whose play is in it ("play of: Ana (3 plays,
+0.80 h), Bo (1 play, 0.20 h)"). A merged clone can be merged again, and recorded into: the new play is the new clone's own.
+
+A merged clone may be up to three quarters of the largest a recording can be, so it can still be recorded into. If the picked ones
+are bigger than that together, the ones that fit (in the order picked) are merged and the status line says so. A recording that
+ends in a broken block (the game closed mid-write) goes in up to that block, as Fetch would read it. A name that is taken is refused,
+and nothing is overwritten: the file is written as `NAME.hsmclone.part` and takes its name only when it is whole.
+
+A merged clone is an ordinary recording, of block kinds every Fetch knows: a Name block before each player's play, and the new name
+and look at the end. A Fetch before pre12 reads it whole, with all its play, under the new name; it reads it as one player, so it
+guesses one mouse sensitivity for the play that keeps none (pre12 keeps it in the file, so this is only for older recordings merged).
+
+### Watching the clone think
+
+Press `=` in a fight (or "Show the clone thinking" in the menu, or `show_mind=1`) to put a panel on the left of the screen while a clone fights. It is off by
+default, shows only offline, and hides while the menu is open. `=` again hides it, and the choice is kept in `Fetch.ini`. It is drawn five times a second.
+
+- **Now playing:** the move the clone is on (the keys it holds and the weapon type), whose recording it came from, how far into it
+  the clone is, and why it plays it: *best match* (the moment that fit best), *kept playing* (the move it was on still fit best,
+  so it went on) or *turning to face* (the foe is off to the side or behind, and the clone turns to it first).
+- **Match map:** left to right is which way the foe is, from 180 degrees to the left to 180 to the right, with straight ahead in
+  the middle; up is how far, to 6 m (further is drawn at the top). The white square is the fight now. The dots are where the foe was
+  in the moments the clone weighed, at most eight, the one played ringed. A merged clone colours each player's moments its own
+  colour, and names them above the map.
+- **Cost bars:** what each of those moments cost, cheapest first, drawn against the dearest. Shorter fits better. A mark says what
+  changed a cost: `75% stay` (the move playing goes on cheaper), `x2 again` (picked a moment ago), `x4 hurt` (the clone was hurt
+  playing it).
+- **A trained model** (`.hsmmodel`) has no moments to weigh: the panel shows the kinds of move it may play next and how likely each
+  is, the one played marked, in place of the map and the bars.
+
+The panel costs a little time each time the clone looks (it keeps the eight cheapest moments, not only the cheapest). Every half
+minute the log says what a look takes: `clone: 300 looks in 30 s, 0.40 ms each on average, 1.10 ms at most (the clone-thinking
+overlay on)`. With the panel off the clone picks exactly as before; with it on it picks the same moments too.
 
 ## Record, share, fight
 
@@ -145,13 +214,18 @@ the input exactly. For both fighters:
   upper body, lower body, an arm or a leg), and how hard. A weapon touching a body is a hit at most every 100 ms per hand.
 - **Clash**: your weapon met theirs, which hand of each, and how hard.
 - **Damage** and **Sever**: who lost health in which part and how much, and which part was cut off.
-- **ParryOn / ParryOff, Thrust, Kick, StuckOn / StuckOff**: per hand, from the fighter's own flags.
+- **Thrust, Kick, StuckOn / StuckOff**: per hand, from the fighter's own flags. **ParryOn / ParryOff** come from a parrying flag
+  the game never sets, so there are none; Parried below is the game's parry.
 - **GrabOn / GrabOff**: per hand, and which part of the other fighter it holds. **GrabbedOn / GrabbedOff**: being held.
 - **PickUp / Drop**: a weapon in a hand. **Fall / GetUp**, **Death**.
 - **Strike** (pre11 on): how one of your blows met the foe: on bare skin, through a gap in the armour, beating the armour, or held by
   it (below), with the part, the surface struck, the damage and how much of it was a thrust.
 - **Armour** (pre11 on): what a fighter wears changed (a new foe, a piece lost).
 - **Stage** (pre11 on): a training session's stage began, with its weapon, tier and kind of foe, or the session ended.
+- **Parried** (pre12 on): who caught the other's blade on guard. The game does this when a blade meets the weapon of a fighter who
+  is guarding, wins a roll on their weapon skill, and is not falling or out on their feet: the blade's cut and push are weakened,
+  and enough catches in a row stop its cut. The event has the hand of the blade caught, how fast it came, and how full the parry
+  was, from 0 to 1 (1 stopped the cut). Catches a few ms apart are one parry.
 
 They go in an Events block straight after the Play block they belong to. The file stays version 3: an older Fetch skips the block,
 and this one reads a file without it. A block that is not well formed, or follows no Play block, is skipped alone. Every Play block
@@ -160,6 +234,41 @@ now gets one, empty if nothing happened, so play with no events is known to have
 
 Strike, Armour and Stage go in a More block right after the Events block, so that an older Fetch, which refuses an Events block with
 kinds it does not know, still reads the rest. Every Play block from pre11 on gets one.
+
+Parried, and any kind of event added after it, goes in a Later block after the Input block (pre12 on). A Fetch before pre12 skips
+the block, and reads the file as it did. A Fetch reading a Later block passes over the kinds in it that are newer than itself and
+keeps the rest, so the next new kind goes in the same block without a new one. A recording from before pre12 has no parries in it:
+its parry count is unknown, not 0.
+
+### Mouse sensitivity and every other key (pre12 on)
+
+The mouse is recorded as your hand moved it, before the game scales it by its "Mouse Sensitivity". From pre12 a recording keeps
+that sensitivity (and "Invert Mouse") too, and a clone plays the mouse at the recorder's sensitivity, whatever the player fighting
+it has set. So a clone of someone at 2.5 swings as they did on a machine set to 0.5. Changing the setting mid-fight starts a new
+block, so each stretch of play keeps its own. The camera is not affected either way: it turns by the recorded angles. A model
+keeps none yet, so it always plays at yours.
+
+A recording from before pre12 keeps none, but its own turns show it, and Fetch reads it off them when it loads the file: nothing in
+the file is changed, so older Fetch versions read it as before. Off guard the game turns the camera by exactly the mouse movement x
+the sensitivity x 0.9375, and while guarding by an 80th of that, so most of a recording's turns share one of those two ratios. The
+one most turns share is the sensitivity, and which way the camera pitched on them says whether the mouse was inverted. All the
+plays in a file that keep none get the one they show together. On the recordings we tried it came out at the setting to two
+decimals. A file with too few mouse turns to tell (one built from `.hsmrec` recordings with no turning, say) still plays at yours.
+`Fetch.log` says which: `its turns show 2.00: its mouse plays at that`, or `its turns do not show it`. `hsmclone.py info` shows
+the same. The rule is `LookGuess` in `shared/clone/hsm_clone.h`.
+
+Every key press that goes to something other than a fighter is recorded too: a key bound on a mod's gun, say, which the game calls
+as an `InpActEvt_` function on that actor. Fetch keeps its class and function name and the sample it came before. When a clone's
+move plays that moment, the press goes to the same class of thing the clone carries (its held and sheathed weapons, attached
+actors), so a clone holding the same modded gun fires it as the player did. A key's pressed and released ends are paired: a
+release plays only after its press, and a key still down is let go when the move ends, the clone turns to face you, or it goes
+down. A key on something the clone does not carry is left out (`Fetch.log` says so once). The fighter's own keys are in the input
+stream as before; Talk, the camera lock and the middle mouse button are still never played.
+
+Not covered: models (replay only), mouse axes bound on a mod's actor (`InpAxisEvt_`), keys a mod reads itself (UE4SS Lua
+keybinds, raw key polling), and keys on something the fighter does not carry (a mod's menu, a manager actor).
+
+These go in an Input block after the More block. An older Fetch skips it. The rules are `shared/clone/hsm_clone_input.h`.
 
 ### Armour
 
@@ -197,7 +306,9 @@ record more fights against each kind of foe.
 **The clone reacts as you do.** The nets also hear 13 numbers about the fight just before each moment: how long since you landed a
 hit, took one, clashed, and since the foe last parried, thrusted or kicked (up to 3 s, then "long ago"), and whether you are held,
 holding them, down, they are down, your blade is stuck, or they are parrying. If you back off after a blow or press in when they
-fall, the clone learns that. In the fight the clone hears its own fight the same way: you are its foe.
+fall, the clone learns that. In the fight the clone hears its own fight the same way: you are its foe. The foe's parrying comes from
+ParryOn, which never comes, so those two always read "long ago" and "no". The nets do not hear Parried yet: the models were trained
+without it, and a model that did would not load in an older Fetch.
 
 **A move that worked counts more.** Each moment's weight in training goes by what came in the next 1.5 s, the nearer the more:
 a hit you landed, damage you did and a kill count it up, a hit taken, damage taken and your death count it down. A weight is
@@ -279,7 +390,8 @@ the same moment as anything else.
 
 A shared file is untrusted. A model must pass all of these or it is refused whole, the log says why, and nothing crashes: size, version,
 a checksum on every block, every part present and in order, layer shapes, finite values, no trailing bytes. What it outputs is clamped,
-Talk and the camera lock are masked, and the file name cannot leave `Clones/`. A kit must pass `CheckPassportSave` or the clone wears
+Talk and the camera lock are masked, and the file name cannot leave `Clones/`. A recording's keys are names of letters, digits and `_`
+only, and are only ever called on what the clone itself carries, never on a fighter. A kit must pass `CheckPassportSave` or the clone wears
 yours.
 
 ## What has been measured

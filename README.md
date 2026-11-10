@@ -107,7 +107,7 @@ This writes `build/dsound.dll` and `build/clonetrain.exe`.
 |---|---|
 | `src/` | The mod: hooks, the game adapter, recording, the clone, training sessions, the menu. |
 | `shared/` | Game-independent logic, header-only C++20. `shared/clone/` is Fetch's own; the rest is shared with HSMMod. |
-| `tools/` | `clonetrain.cpp` (the trainer), `train.bat`, and `hsmclone.py` for reading recordings. |
+| `tools/` | `clonetrain.cpp` (the trainer and merger), `train.bat`, `merge.bat`, and `hsmclone.py` for reading recordings. |
 | `docs/` | `CLONE.md` (how it works), `HUMAN_TESTING.md` (in-game checks), `measurements/`. |
 | `third_party/minhook/` | MinHook, for the hooks. |
 

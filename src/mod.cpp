@@ -4,12 +4,14 @@
 #include <windows.h>
 #include "clone_player.h"
 #include "clone_style.h"
+#include "clone/hsm_clone_merge.h"
 #include "clone/hsm_clone_rules.h"
 #include "clone/hsm_fetch_menu.h"
 #include "log.h"
 #include "paths.h"
 #include "steam_lobby.h"
 #include "training.h"
+#include "ui/clone_overlay.h"
 #include "ui/fetch_menu.h"
 #include "ue/engine.h"
 #include "ue/hook.h"
@@ -33,7 +35,7 @@ constexpr char kDefaultIni[] =
     "[fetch]\r\n"
     "; record=1 writes how you fight to Clones/<name>.hsmclone next to the game, about 25 MB an hour.\r\n"
     "record=0\r\n"
-    "; name= names that file. Empty: your Steam name.\r\n"
+    "; name= names that file (the menu's Record to sets it, and Rename renames it). Empty: your Steam name.\r\n"
     "name=\r\n"
     "; clone=<name>: offline, the clone in Clones/<name>.hsmmodel or .hsmclone joins each fight level. 1: the first there. 0: none.\r\n"
     "clone=0\r\n"
@@ -45,13 +47,19 @@ constexpr char kDefaultIni[] =
     "menu_key=;\r\n"
     "; strikes=0 stops Fetch reading how each blow met skin or armour (the game's damage function, watched; it changes nothing).\r\n"
     "strikes=1\r\n"
+    "; parries=0 stops Fetch reading each parry (the game's StopThatBlade, watched; it changes nothing).\r\n"
+    "parries=1\r\n"
     "; clone_weapon=kit: the clone holds what its recording held. random: a weapon type it has moves for, new each time it comes in.\r\n"
     "; match: your weapon's type, when it has moves for it. Or one type: sword1h sword2h mace1h mace2h axe1h axe2h polearm.\r\n"
     "clone_weapon=kit\r\n"
     "; drill=tour: a training session (the menu) takes every weapon type against every kind of foe. gaps: what your recording is short of.\r\n"
     "drill=tour\r\n"
     "; drill_minutes=20: a training session's length, 5 to 60.\r\n"
-    "drill_minutes=20\r\n";
+    "drill_minutes=20\r\n"
+    "; show_mind=1 shows the clone thinking while it fights: what it plays and why, the moments it weighed, what they cost.\r\n"
+    "show_mind=0\r\n"
+    "; mind_key== shows or hides it in game (the = key): a letter, a digit, F1 to F12, ; or =. 0: no key.\r\n"
+    "mind_key==\r\n";
 
 std::string ReadIni(const std::wstring& ini, const wchar_t* key, const wchar_t* fallback) {
     wchar_t w[256];
@@ -103,19 +111,71 @@ std::vector<std::string> ListClones() {
     return out;
 }
 
+// The recordings the menu can record to and rename: Clones/*.hsmclone, by name, in name order.
+std::vector<std::string> ListRecordings() {
+    std::vector<std::string> out;
+    WIN32_FIND_DATAW d;
+    HANDLE h = FindFirstFileW(ModFilePath(L"Clones\\*.hsmclone").c_str(), &d);
+    if (h == INVALID_HANDLE_VALUE) return out;
+    do {
+        if (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        const std::wstring file = d.cFileName;
+        if (file.size() < 10 || _wcsicmp(file.c_str() + file.size() - 9, L".hsmclone") != 0) continue;   // not .hsmclone.old
+        const std::string stem = Narrow(file.substr(0, file.size() - 9));
+        if (!stem.empty()) out.push_back(stem);
+    } while (FindNextFileW(h, &d));
+    FindClose(h);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+bool FileThere(const std::wstring& path) {
+    const DWORD a = GetFileAttributesW(path.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 // The keyboard as the menu reads it: the OS key state, so it works while the game's own input is held off. Only while the
 // game's window has the keyboard: keys typed into another window are not for it.
 class Keys {
 public:
+    Keys() {
+        for (int vk = 'A'; vk <= 'Z'; ++vk) Watch(vk);
+        for (int vk = '0'; vk <= '9'; ++vk) Watch(vk);
+        for (int vk = VK_NUMPAD0; vk <= VK_NUMPAD9; ++vk) Watch(vk);
+        for (int vk : {VK_BACK, VK_OEM_MINUS, VK_SUBTRACT, VK_SHIFT}) Watch(vk);
+    }
     void Poll() {
         DWORD pid = 0;
         HWND fg = GetForegroundWindow();
         const bool ours = fg && GetWindowThreadProcessId(fg, &pid) && pid == GetCurrentProcessId();
         was_ = now_;
-        for (int vk : watched_) if (vk > 0 && vk < 256) now_[size_t(vk)] = ours && (GetAsyncKeyState(vk) & 0x8000);
+        for (int vk : watched_) {
+            if (vk <= 0 || vk >= 256) continue;
+            const SHORT s = GetAsyncKeyState(vk);
+            now_[size_t(vk)] = ours && (s & 0x8000);
+            tapped_[size_t(vk)] = ours && (s & 1) && !now_[size_t(vk)];   // down and up again since the last tick
+        }
     }
     void Watch(int vk) { if (vk > 0 && vk < 256 && std::find(watched_.begin(), watched_.end(), vk) == watched_.end()) watched_.push_back(vk); }
-    bool Pressed(int vk) const { return vk > 0 && vk < 256 && now_[size_t(vk)] && !was_[size_t(vk)]; }
+    bool Pressed(int vk) const { return vk > 0 && vk < 256 && ((now_[size_t(vk)] && !was_[size_t(vk)]) || tapped_[size_t(vk)]); }
+    // While a name is typed: the keys that make one this tick. Backspace held goes on erasing.
+    std::vector<clone::TypeKey> Typed() {
+        std::vector<clone::TypeKey> out;
+        using K = clone::TypeKey;
+        const bool shift = now_[VK_SHIFT], upper = shift != ((GetKeyState(VK_CAPITAL) & 1) != 0);
+        for (int vk = 'A'; vk <= 'Z'; ++vk) if (Pressed(vk)) out.push_back({K::Char, char(upper ? vk : vk - 'A' + 'a')});
+        for (int vk = '0'; vk <= '9'; ++vk) if (Pressed(vk) && !shift) out.push_back({K::Char, char(vk)});
+        for (int vk = VK_NUMPAD0; vk <= VK_NUMPAD9; ++vk) if (Pressed(vk)) out.push_back({K::Char, char('0' + vk - VK_NUMPAD0)});
+        if (Pressed(VK_SPACE)) out.push_back({K::Char, ' '});
+        if (Pressed(VK_OEM_MINUS)) out.push_back({K::Char, shift ? '_' : '-'});
+        if (Pressed(VK_SUBTRACT)) out.push_back({K::Char, '-'});
+        const ULONGLONG t = GetTickCount64();
+        if (Pressed(VK_BACK)) { out.push_back({K::Back}); backAt_ = t + 450; }
+        else if (now_[VK_BACK] && t >= backAt_) { out.push_back({K::Back}); backAt_ = t + 50; }
+        if (Pressed(VK_RETURN)) out.push_back({K::Enter});
+        if (Pressed(VK_ESCAPE)) out.push_back({K::Esc});
+        return out;
+    }
     clone::MenuKey Nav() const {
         if (Pressed(VK_UP) || Pressed('W')) return clone::MenuKey::Up;
         if (Pressed(VK_DOWN) || Pressed('S')) return clone::MenuKey::Down;
@@ -127,7 +187,8 @@ public:
     }
 private:
     std::vector<int> watched_ = {VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, 'W', 'S', 'A', 'D', VK_RETURN, VK_SPACE, VK_ESCAPE};
-    std::array<bool, 256> now_{}, was_{};
+    std::array<bool, 256> now_{}, was_{}, tapped_{};
+    ULONGLONG backAt_ = 0;
 };
 
 Config LoadConfig() {
@@ -144,10 +205,12 @@ Config LoadConfig() {
     c.duel = ReadIni(ini, L"duel", L"1") != "0";
     c.brain = clone::ParseBrain(ReadIni(ini, L"brain", L"auto"));
     c.strikes = ReadIni(ini, L"strikes", L"1") != "0";
+    c.parries = ReadIni(ini, L"parries", L"1") != "0";
     const std::string weapon = ReadIni(ini, L"clone_weapon", L"kit");
     c.cloneWeapon = clone::ParseCloneWeapon(weapon);
     if (c.cloneWeapon == 0xFF) { HSM_LOG("fetch: clone_weapon=%s is not one Fetch knows; the clone keeps its kit", weapon.c_str()); c.cloneWeapon = clone::kCloneKit; }
     c.drill = clone::Lower(ReadIni(ini, L"drill", L"tour")).find("gap") != std::string::npos ? 1 : 0;
+    c.showMind = ReadIni(ini, L"show_mind", L"0") == "1";
     c.drillMinutes = std::clamp(std::atoi(ReadIni(ini, L"drill_minutes", L"20").c_str()), clone::kMinDrillMinutes, clone::kMaxDrillMinutes);
     const std::string key = ReadIni(ini, L"menu_key", L";");
     c.menuKey = clone::ParseMenuKey(key);
@@ -159,6 +222,13 @@ Config LoadConfig() {
         c.menuKey = clone::kMenuKeyDefault;
         WriteIni(L"menu_key", fallback);
     }
+    const std::string mind = ReadIni(ini, L"mind_key", L"=");
+    c.mindKey = clone::ParseMenuKey(mind);
+    if (c.mindKey < 0 || clone::MenuKeyClash(c.mindKey)) {
+        HSM_LOG("fetch: mind_key=%s is not a key Fetch can use; the clone-thinking overlay is on =", mind.c_str());
+        c.mindKey = clone::kMindKeyDefault;
+    }
+    if (c.mindKey && c.mindKey == c.menuKey) { HSM_LOG("fetch: mind_key is the menu's key; the overlay has no key (the menu's row still turns it on)"); c.mindKey = 0; }
     return c;
 }
 
@@ -175,7 +245,7 @@ std::string SteamName() {
 
 class Mod {
 public:
-    explicit Mod(const Config& c) : cfg_(c) { keys_.Watch(cfg_.menuKey); }
+    explicit Mod(const Config& c) : cfg_(c) { keys_.Watch(cfg_.menuKey); keys_.Watch(cfg_.mindKey); }
     SteamLobby lobby;
     // Worker thread, before the first tick.
     void LoadClone() { player_->Load(cfg_); }
@@ -199,7 +269,13 @@ public:
         lobby.Tick(GetTickCount64());
         const bool offline = lobby.Offline(), mayFight = fightLevel_ && offline;
         SwapLoadedClone();
-        if (name_.empty() && offline) { name_ = cfg_.name.empty() ? SteamName() : cfg_.name; if (name_.empty()) name_ = "player"; }
+        MergeDone();
+        if (!named_ && offline) {
+            named_ = true;
+            mine_ = SteamName();
+            if (mine_.empty()) mine_ = "player";
+            name_ = cfg_.name.empty() ? mine_ : cfg_.name;
+        }
         // A training session records throughout, into the player's own file, whatever record= says.
         const bool training = training_.running();
         if (cfg_.record || training) {
@@ -212,6 +288,7 @@ public:
         ui::BannerTick(menu_.open() ? std::string() : training_.Banner());
         if (!player_->watching()) cloneWatch_.Pause();
         MenuTick(offline);
+        MindTick(offline);
         adapter_.TickDeferredDestroys();
     }
 private:
@@ -227,8 +304,14 @@ private:
         settings_.cloneWeapon = cfg_.cloneWeapon;
         settings_.drill = cfg_.drill;
         settings_.drillMinutes = cfg_.drillMinutes;
+        settings_.showMind = cfg_.showMind;
         settings_.training = training_.running();
+        settings_.recordTo = cfg_.name;
+        settings_.mine = mine_;
         clones_ = ListClones();
+        recordings_ = ListRecordings();
+        settings_.targetThere = FileThere(game::RecordingBase(name_) + L".hsmclone");
+        menuNote_.clear();
         menu_.Open();
         adapter_.CaptureInput(true);   // the menu's keys do not reach the fighter
         HSM_LOG("fetch: menu open (%zu clones in Clones/)", clones_.size());
@@ -242,11 +325,33 @@ private:
         HSM_LOG("fetch: menu closed");
     }
 
+    // by: what turned it, to say in the log (null: the menu, which says so itself).
+    void SetShowMind(bool on, const char* by) {
+        cfg_.showMind = settings_.showMind = on;
+        player_->SetMind(on);
+        WriteIni(L"show_mind", on ? "1" : "0");
+        mindAt_ = 0;
+        if (by) HSM_LOG("fetch: the clone-thinking overlay is %s (%s, %s)", on ? "ON" : "OFF", by, clone::MenuKeyName(cfg_.mindKey).c_str());
+    }
+
+    // The overlay that shows the clone thinking: offline, while a clone fights, never over the menu. Five times a second.
+    void MindTick(bool offline) {
+        if (!cfg_.showMind || !offline || menu_.open() || !player_->inFight()) { ui::MindTick(false, mindView_); return; }
+        const ULONGLONG now = GetTickCount64();
+        if (now < mindAt_) return;
+        mindAt_ = now + kMindEveryMs;
+        ui::MindTick(player_->Mind(mindView_), mindView_);
+    }
+
     void MenuTick(bool offline) {
-        if (!cfg_.menuKey) return;
+        if (!cfg_.menuKey && !cfg_.mindKey) return;
         keys_.Poll();
-        if (keys_.Pressed(cfg_.menuKey)) { if (menu_.open()) CloseMenu(); else OpenMenu(offline); }
-        else if (menu_.open()) Apply(menu_.Key(keys_.Nav(), settings_, clones_));
+        // The overlay's key, offline, but not while a name is typed.
+        if (cfg_.mindKey && offline && !menu_.typing() && keys_.Pressed(cfg_.mindKey)) SetShowMind(!cfg_.showMind, "its key");
+        if (!cfg_.menuKey) return;
+        if (menu_.typing()) { for (const clone::TypeKey& k : keys_.Typed()) Apply(menu_.Type(k, settings_, recordings_)); }   // the menu key is a letter too
+        else if (keys_.Pressed(cfg_.menuKey)) { if (menu_.open()) CloseMenu(); else OpenMenu(offline); }
+        else if (menu_.open()) Apply(menu_.Key(keys_.Nav(), settings_, clones_, recordings_));
         if (!menu_.open()) return;
         if (!offline) { CloseMenu(); return; }
         if (UObject* me = adapter_.PlayerWillie(0); !me || adapter_.IsDead(me)) { CloseMenu(false); return; }
@@ -297,8 +402,130 @@ private:
                 settings_.training = training_.running();
                 break;
             case clone::MenuChange::Closed: CloseMenu(); break;
+            case clone::MenuChange::RecordTo: SetTarget(settings_.recordTo); break;
+            case clone::MenuChange::Rename: RenameRecording(name_, settings_.renameTo); break;
+            case clone::MenuChange::MergeMake: StartMerge(); break;
+            case clone::MenuChange::ShowMind: SetShowMind(settings_.showMind, nullptr); break;
         }
         if (c != clone::MenuChange::None && c != clone::MenuChange::Closed) HSM_LOG("fetch: menu: %s is now %s", clone::MenuLabel(menu_.row()), clone::MenuValue(menu_.row(), settings_).c_str());
+    }
+
+    // Record to: the name play goes into from the next tick (empty: the player's own), kept in Fetch.ini name=.
+    void SetTarget(const std::string& name) {
+        cfg_.name = name;
+        settings_.recordTo = name;
+        WriteIni(L"name", name);
+        name_ = name.empty() ? mine_ : name;
+        style_.Retarget();
+        settings_.targetThere = FileThere(game::RecordingBase(name_) + L".hsmclone");
+        HSM_LOG("fetch: recording into Clones/%s.hsmclone%s", clone::FileStem(name_).c_str(), settings_.targetThere ? "" : " (a new file, made by the first fight)");
+    }
+
+    // Rename: the recording's file (and its model, if it has one), and the name inside it, which goes on its end. Not while play is
+    // being kept into it. Record to and clone= follow it.
+    void RenameRecording(const std::string& from, const std::string& to) {
+        if (style_.live()) { menuNote_ = "Rename: not in the middle of a recorded fight"; return; }
+        const std::wstring a = game::RecordingBase(from), b = game::RecordingBase(to);
+        const bool sameFile = clone::SameName(clone::FileStem(from), clone::FileStem(to));   // only its case changes
+        style_.Retarget();   // what is kept goes in first
+        if (!MoveFileW((a + L".hsmclone").c_str(), (b + L".hsmclone").c_str())) {
+            const DWORD e = GetLastError();
+            menuNote_ = e == ERROR_ALREADY_EXISTS ? "Rename: there is a recording of that name already" : "Rename: the file could not move (Fetch.log)";
+            HSM_LOG("fetch: rename %s to %s: the file could not move (error %lu)", from.c_str(), to.c_str(), e);
+            return;
+        }
+        for (const wchar_t* ext : {L".hsmmodel", L".hsmmodel.bak"}) {
+            if (!FileThere(a + ext)) continue;
+            if ((!sameFile && FileThere(b + ext)) || !MoveFileW((a + ext).c_str(), (b + ext).c_str()))
+                HSM_LOG("fetch: rename %s to %s: Clones/%s%ls stays (there is one of the new name, or it could not move)", from.c_str(), to.c_str(), clone::FileStem(from).c_str(), ext);
+        }
+        if (!game::AppendNameBlock(b + L".hsmclone", to)) HSM_LOG("fetch: rename %s to %s: the name inside the file could not change", from.c_str(), to.c_str());
+        HSM_LOG("fetch: renamed Clones/%s.hsmclone to %s.hsmclone", clone::FileStem(from).c_str(), clone::FileStem(to).c_str());
+        SetTarget(to);
+        if (!cfg_.clone.empty() && clone::SameName(clone::FileStem(cfg_.clone), clone::FileStem(from))) {
+            cfg_.clone = settings_.clone = to;
+            WriteIni(L"clone", to);
+            StartLoad();
+        }
+        clones_ = ListClones();
+        recordings_ = ListRecordings();
+        menuNote_ = "Renamed " + from + " to " + to;
+    }
+
+    // Merge: the recordings picked, in that order, into a new clone of the name typed (hsm_clone_merge.h). Made on a thread of
+    // its own, as the files can be big; it goes in as a part file and takes its name only when whole, so nothing is overwritten
+    // and a half-made one is never a clone.
+    void StartMerge() {
+        if (settings_.merging) return;
+        const std::vector<std::string> from = settings_.mergeFrom;
+        const std::string name = settings_.mergeName;
+        const std::wstring out = game::RecordingBase(name) + L".hsmclone";
+        if (FileThere(out)) { menuNote_ = "Merge: there is a recording of that name already"; return; }
+        for (const std::string& f : from)
+            if (clone::SameName(f, clone::FileStem(name_))) { style_.Save(); break; }   // the play kept so far goes in too
+        settings_.merging = true;
+        mergeNote_.clear();
+        mergeAt_.store(0, std::memory_order_relaxed);
+        mergeDone_.store(false, std::memory_order_relaxed);
+        mergeName_ = name;
+        HSM_LOG("fetch: merging %zu recordings into Clones/%s.hsmclone", from.size(), clone::FileStem(name).c_str());
+        merger_ = std::thread([this, from, name, out] {
+            clone::MergeResult r;
+            std::vector<FILE*> files;
+            std::vector<clone::MergeSource> in;
+            for (const std::string& f : from) {
+                FILE* h = _wfopen(ModFilePath((L"Clones\\" + Wide(f) + L".hsmclone").c_str()).c_str(), L"rb");
+                if (!h) { r.why = f + " could not be read"; break; }
+                files.push_back(h);
+                const long long size = _fseeki64(h, 0, SEEK_END) == 0 ? _ftelli64(h) : -1;
+                clone::MergeSource src;
+                src.stem = f;
+                src.size = uint64_t(size < 0 ? 0 : size);
+                src.read = [h](uint64_t at, uint8_t* to, size_t n) {
+                    return _fseeki64(h, (long long)at, SEEK_SET) == 0 && std::fread(to, 1, n, h) == n;
+                };
+                in.push_back(std::move(src));
+            }
+            if (in.size() == from.size()) {
+                const std::wstring part = out + L".part";
+                if (FILE* w = _wfopen(part.c_str(), L"wb")) {
+                    r = clone::MergeFiles(in, name, [w](const uint8_t* d, size_t n) { return std::fwrite(d, 1, n, w) == n; },
+                                          [this](bool writing, uint32_t i, uint32_t n) {
+                                              mergeAt_.store(uint32_t(writing) << 31 | (i + 1) << 16 | n, std::memory_order_relaxed);
+                                          });
+                    const bool closed = std::fclose(w) == 0;
+                    if (r.ok && !closed) { r.ok = false; r.why = "the new file could not be written"; }
+                    if (r.ok && !MoveFileW(part.c_str(), out.c_str())) { r.ok = false; r.why = "there is a recording of that name already"; }
+                    if (!r.ok) DeleteFileW(part.c_str());
+                } else {
+                    r.why = "the new file could not be made";
+                }
+            }
+            for (FILE* h : files) std::fclose(h);
+            merged_ = std::move(r);
+            mergeDone_.store(true, std::memory_order_release);
+        });
+    }
+
+    void MergeDone() {
+        if (!settings_.merging || !mergeDone_.load(std::memory_order_acquire)) return;
+        merger_.join();
+        settings_.merging = false;
+        const clone::MergeResult& r = merged_;
+        const std::string stem = clone::FileStem(mergeName_);
+        if (r.ok) {
+            std::string names;
+            for (const std::string& n : r.names) names += (names.empty() ? "" : ", ") + n;
+            HSM_LOG("fetch: made Clones/%s.hsmclone: %s of play, %llu rows, %.1f MB, from %s%s%s", stem.c_str(), clone::Clock(r.seconds).c_str(),
+                    static_cast<unsigned long long>(r.rows), double(r.bytes) / (1024.0 * 1024.0), names.c_str(), r.why.empty() ? "" : ". ", r.why.c_str());
+            mergeNote_ = "Made " + stem + ": " + clone::Clock(r.seconds) + " of play from " + std::to_string(r.used) +
+                         (r.used < r.asked ? " of " + std::to_string(r.asked) : std::string()) + " recordings. Train it with train.bat";
+        } else {
+            HSM_LOG("fetch: merge into Clones/%s.hsmclone: not made: %s", stem.c_str(), r.why.c_str());
+            mergeNote_ = "Merge: " + r.why;
+        }
+        clones_ = ListClones();
+        recordings_ = ListRecordings();
     }
 
     // Only in a Free Mode fight, offline, with no clone in it (the menu says why not on its status line).
@@ -342,26 +569,34 @@ private:
 
     ui::MenuView View() const {
         ui::MenuView v;
-        v.row = menu_.row();
         v.key = clone::MenuKeyName(cfg_.menuKey);
-        for (int r = 0; r < clone::kMenuRows; ++r) v.values[size_t(r)] = clone::MenuValue(clone::MenuRow(r), settings_);
+        v.typing = menu_.typing();
+        v.merge = menu_.onMerge();
+        v.lines = menu_.Lines(settings_, recordings_, v.title);
         char b[160];
         if (!cfg_.record) v.status[0] = "Recording: off";
         else if (!style_.on()) v.status[0] = "Recording: stopped (Fetch.log says why)";
         else {
-            std::snprintf(b, sizeof b, "Recording%s: %s of play kept, %.1f MB", style_.live() ? " now" : " (waiting for a fight)",
-                          clone::Clock(style_.seconds()).c_str(), double(style_.bytes()) / (1024.0 * 1024.0));
+            std::snprintf(b, sizeof b, "Recording%s into %s: %s of play kept, %.1f MB", style_.live() ? " now" : " (waiting for a fight)",
+                          clone::FileStem(name_).c_str(), clone::Clock(style_.seconds()).c_str(), double(style_.bytes()) / (1024.0 * 1024.0));
             v.status[0] = b;
         }
         const clone::Tally& t = style_.tally();
-        std::snprintf(b, sizeof b, "Hits: %u landed, %u taken   Clashes: %u   Parries: %u", t.landed, t.taken, t.clashes, t.parries);
+        std::snprintf(b, sizeof b, "Hits: %u landed, %u taken   Clashes: %u   Parries: %u made, %u taken", t.landed, t.taken, t.clashes, t.parries, t.parried);
         v.status[1] = b;
         std::snprintf(b, sizeof b, "Damage: %.0f dealt, %.0f taken   Kills: %u   Deaths: %u", double(t.dealt), double(t.suffered), t.kills, t.deaths);
         v.status[2] = b;
         std::snprintf(b, sizeof b, "Strikes: %u through a gap, %u on bare skin, %u beat the armour, %u held by it", t.gaps, t.bare, t.beat, t.held);
         v.status[3] = b;
         v.status[4] = "Clone: " + (loading_ ? std::string("loading...") : player_->Describe());
-        v.status[5] = trainingNote_.empty() ? training_.Status() : trainingNote_;
+        std::string merging;
+        if (settings_.merging) {
+            const uint32_t at = mergeAt_.load(std::memory_order_relaxed);
+            std::snprintf(b, sizeof b, "Merging: %s %u of %u...", at >> 31 ? "writing" : "reading", at >> 16 & 0x7FFF, at & 0xFFFF);
+            merging = b;
+        }
+        v.status[5] = !menu_.note().empty() ? menu_.note() : !menuNote_.empty() ? menuNote_ : !merging.empty() ? merging : !mergeNote_.empty() ? mergeNote_
+                    : trainingNote_.empty() ? training_.Status() : trainingNote_;
         return v;
     }
 
@@ -377,10 +612,21 @@ private:
     bool loading_ = false, loadAgain_ = false;
     clone::Menu menu_;
     clone::MenuSettings settings_;
-    std::vector<std::string> clones_;
+    static constexpr ULONGLONG kMindEveryMs = 200;
+    ULONGLONG mindAt_ = 0;          // MindTick: when the overlay is drawn next
+    ui::MindView mindView_;
+    std::vector<std::string> clones_, recordings_;
     Keys keys_;
     UObject* lastMode_ = nullptr;
-    std::string level_, name_;
+    std::string level_, name_, mine_;   // name_: the recording play goes into; mine_: the player's own (Steam) name
+    bool named_ = false;
+    std::string menuNote_;              // what the last Rename came to
+    // The Merge page's merge, on a thread of its own (StartMerge), until MergeDone takes its result.
+    std::thread merger_;
+    std::atomic<bool> mergeDone_{false};
+    std::atomic<uint32_t> mergeAt_{0};  // writing << 31 | the source it is on << 16 | of how many
+    clone::MergeResult merged_;
+    std::string mergeName_, mergeNote_; // mergeNote_: what the last merge came to
     bool fightLevel_ = false;
     TrainingSession training_;
     bool trainedRecording_ = false;
@@ -401,6 +647,8 @@ DWORD WINAPI Main(void*) {
     const Config cfg = LoadConfig();
     game::FightWatch::SetStrikes(cfg.strikes);
     if (!cfg.strikes) HSM_LOG("fetch: strikes=0: no Strike events");
+    game::FightWatch::SetParries(cfg.parries);
+    if (!cfg.parries) HSM_LOG("fetch: parries=0: no Parried events");
     const bool menu = cfg.menuKey != 0;
     if (!cfg.record && cfg.clone.empty() && !menu) { HSM_LOG("fetch: record=0, clone=0 and menu_key=0: nothing to do, nothing hooked"); return 0; }
     Mod* mod = new Mod(cfg);

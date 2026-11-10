@@ -188,6 +188,8 @@ private:
     uint32_t s_;
 };
 class Model;
+// A token's chance of being played next (Model::Odds), and its clip that fits best (what it would play).
+struct ModelOdd { uint32_t token = 0; int clip = -1; float p = 0; };
 // Room for one decision, so a decision never allocates.
 struct ModelScratch { std::vector<float> z, a, b, y, sum; explicit ModelScratch(const Model& m); };
 
@@ -240,44 +242,89 @@ public:
     // Chooses a clip from the logits and summary Forward left. The head only asks for changes: where it asks for none, a clip
     // need only start from what is held. Noise is per token; within a token the clip is chosen for fit. -1: nothing to play.
     int Choose(const float* seen, ModelRng& g, const ModelScratch& sc) const {
-        const float* y = sc.y.data(); const float* s = y + tokens_;
-        const int group = WeaponGroupOf(seen);
-        const uint32_t plays = plays_[size_t(group)];
-        const std::vector<uint8_t>& has = moves_[size_t(group)];
-        float top = -3.4e38f;
-        for (uint32_t t = 0; t < tokens_; ++t) if (has[t]) top = std::max(top, y[t]);
-        float cur[7], want[7];
-        for (int k = 0; k < 7; ++k) cur[k] = seen[35 + k] > .5f ? 1.f : 0.f;
-        for (int k = 0; k < 7; ++k) {
-            const float p = k < 6 ? s[k] : s[8], th = k == 4 || k == 5 ? kModelThetaGuard : kModelTheta;
-            want[k] = cur[k] > .5f ? (p < 1 - th ? 0.f : 1.f) : (p > th ? 1.f : 0.f);
-        }
-        uint32_t heldNow = 0, asked = 0;
-        for (int k = 0; k < 7; ++k) { if (cur[k] > .5f) heldNow |= 1u << k; if (want[k] != cur[k]) asked |= 1u << k; }
-        const float q33 = std::isfinite(seen[33]) ? seen[33] : 0.f, q34 = std::isfinite(seen[34]) ? seen[34] : 0.f;
+        const Asked q = Ask(seen, sc);
         float best = -3.4e38f; int pick = -1;
         for (uint32_t t = 0; t < tokens_; ++t) {
-            const float lp = y[t] - top;
-            if (!has[t] || lp < kModelFloor) continue;
+            const float lp = q.y[t] - q.top;
+            if (!(*q.has)[t] || lp < kModelFloor) continue;
             const float base = lp + kModelTemp * g.Gumbel();
             if (base < best) continue;
             for (uint32_t j = 0; j < variants_; ++j) {
                 const int ci = slots_[t * variants_ + j];
-                if (ci < 0 || !(plays >> clips_[uint32_t(ci)].group & 1u)) continue;
+                if (ci < 0 || !(q.plays >> clips_[uint32_t(ci)].group & 1u)) continue;
                 const ModelClip& c = clips_[uint32_t(ci)];
                 float eb = 0;
-                for (int k = 0; k < 7; ++k) if (asked >> k & 1u) { const float x = c.bit[k] - want[k]; eb += x * x; }
-                const int miss = std::popcount((c.held ^ heldNow) & ~asked & 127u);
-                const float a = c.prevTurn - q33, e = c.prevLook - q34;
-                const float score = base - kModelBits * eb - kModelHeld * float(miss) - kModelMouse * (a * a + e * e);
+                for (int k = 0; k < 7; ++k) if (q.asked >> k & 1u) { const float x = c.bit[k] - q.want[k]; eb += x * x; }
+                const int miss = std::popcount((c.held ^ q.heldNow) & ~q.asked & 127u);
+                const float a = c.prevTurn - q.q33, e = c.prevLook - q.q34;
+                const float score = base - kModelBits * eb - kModelHeld * float(miss) - kModelMouse * (a * a + e * e);   // as Misfit, in this order
                 if (score > best) { best = score; pick = ci; }
             }
         }
         return pick;
     }
+    // The chance Choose gives each token, highest first: its noise is Gumbel, so a token wins with the softmax of what it scores
+    // before the noise (its logit less its best clip's misfit) over kModelTemp. Tokens it never plays are left out.
+    void Odds(const float* seen, const ModelScratch& sc, std::vector<ModelOdd>& out) const {
+        out.clear();
+        const Asked q = Ask(seen, sc);
+        float top = -3.4e38f;
+        std::vector<float> score;
+        for (uint32_t t = 0; t < tokens_; ++t) {
+            const float lp = q.y[t] - q.top;
+            if (!(*q.has)[t] || lp < kModelFloor) continue;
+            float best = -3.4e38f; int pick = -1;
+            for (uint32_t j = 0; j < variants_; ++j) {
+                const int ci = slots_[t * variants_ + j];
+                if (ci < 0 || !(q.plays >> clips_[uint32_t(ci)].group & 1u)) continue;
+                const float s = lp - Misfit(clips_[uint32_t(ci)], q);
+                if (s > best) { best = s; pick = ci; }
+            }
+            if (pick < 0) continue;
+            out.push_back({t, pick, 0.f});
+            score.push_back(best);
+            top = std::max(top, best);
+        }
+        double sum = 0;
+        for (size_t i = 0; i < out.size(); ++i) sum += std::exp(double(score[i] - top) / kModelTemp);
+        for (size_t i = 0; i < out.size(); ++i) out[i].p = float(std::exp(double(score[i] - top) / kModelTemp) / sum);
+        std::stable_sort(out.begin(), out.end(), [](const ModelOdd& a, const ModelOdd& b) { return a.p > b.p; });
+    }
     int Pick(const float* seen, const float* hist, ModelRng& g, ModelScratch& s, const float* events = nullptr) const { Forward(seen, hist, s, events); return Choose(seen, g, s); }
 private:
     struct Net { std::vector<float> w1, b1, w2, b2, w3, b3; };
+    // What the head asks for on one view (Choose and Odds): the inputs to change, and what a clip must start from.
+    struct Asked {
+        const float* y; const std::vector<uint8_t>* has; uint32_t plays; float top;
+        float want[7]; uint32_t heldNow, asked; float q33, q34;
+    };
+    Asked Ask(const float* seen, const ModelScratch& sc) const {
+        Asked q;
+        q.y = sc.y.data(); const float* s = q.y + tokens_;
+        const int group = WeaponGroupOf(seen);
+        q.plays = plays_[size_t(group)];
+        q.has = &moves_[size_t(group)];
+        q.top = -3.4e38f;
+        for (uint32_t t = 0; t < tokens_; ++t) if ((*q.has)[t]) q.top = std::max(q.top, q.y[t]);
+        float cur[7];
+        for (int k = 0; k < 7; ++k) cur[k] = seen[35 + k] > .5f ? 1.f : 0.f;
+        for (int k = 0; k < 7; ++k) {
+            const float p = k < 6 ? s[k] : s[8], th = k == 4 || k == 5 ? kModelThetaGuard : kModelTheta;
+            q.want[k] = cur[k] > .5f ? (p < 1 - th ? 0.f : 1.f) : (p > th ? 1.f : 0.f);
+        }
+        q.heldNow = q.asked = 0;
+        for (int k = 0; k < 7; ++k) { if (cur[k] > .5f) q.heldNow |= 1u << k; if (q.want[k] != cur[k]) q.asked |= 1u << k; }
+        q.q33 = std::isfinite(seen[33]) ? seen[33] : 0.f; q.q34 = std::isfinite(seen[34]) ? seen[34] : 0.f;
+        return q;
+    }
+    // How badly a clip fits what is asked: changes it does not make, inputs it does not start from, mouse it does not go on with.
+    static float Misfit(const ModelClip& c, const Asked& q) {
+        float eb = 0;
+        for (int k = 0; k < 7; ++k) if (q.asked >> k & 1u) { const float x = c.bit[k] - q.want[k]; eb += x * x; }
+        const int miss = std::popcount((c.held ^ q.heldNow) & ~q.asked & 127u);
+        const float a = c.prevTurn - q.q33, e = c.prevLook - q.q34;
+        return kModelBits * eb + kModelHeld * float(miss) + kModelMouse * (a * a + e * e);
+    }
     static void Layer(const float* in, uint32_t n, const float* w, const float* b, uint32_t out, bool relu, float* o) {
         std::copy(b, b + out, o);
         for (uint32_t i = 0; i < n; ++i) {
@@ -452,6 +499,18 @@ public:
     float pitch() const { return out_.pitch; }
     bool playing() const { return playing_; }
     uint32_t cursor() const { return cursor_; }
+    // Keeps the odds of each Look (odds()): only the overlay wants them.
+    void SetTrace(bool on) { trace_ = on; }
+    bool tracing() const { return trace_; }
+    const std::vector<ModelOdd>& odds() const { return odds_; }   // the last Look's, highest first
+    int lastClip() const { return lastClip_; }                     // the clip it picked then, -1 none
+    uint32_t seq() const { return seq_; }                          // one more each Look
+    // How far into the clip playing the clone is.
+    float ClipMs() const {
+        float ms = 0;
+        for (uint32_t s = first_; s < cursor_ && s < last_; ++s) ms += m_.sample(s).dtMs;
+        return ms;
+    }
     // The camera is eased towards the clip's bearing to the foe: its input then lands where it did for the player.
     void Look(const float* seen) {
         float h[kHistory], ev[kEventInputs];
@@ -459,6 +518,7 @@ public:
         events_.Fill(ev);
         const int c = m_.Pick(seen, h, g_, scratch_, ev);
         sinceMs_ = 0;
+        if (trace_) { m_.Odds(seen, scratch_, odds_); lastClip_ = c; ++seq_; }
         if (c < 0) return;
         const ModelClip& clip = m_.clip(uint32_t(c));
         const float x = seen[kFoeX], y = seen[kFoeX + 1];
@@ -507,8 +567,10 @@ private:
     Output out_;
     InputHistory hist_;
     EventSense events_{true};
-    bool playing_ = false;
-    uint32_t cursor_ = 0, last_ = 0, first_ = 0;
+    bool playing_ = false, trace_ = false;
+    uint32_t cursor_ = 0, last_ = 0, first_ = 0, seq_ = 0;
+    int lastClip_ = -1;
+    std::vector<ModelOdd> odds_;
     uint64_t hideR_ = 0, hideL_ = 0;   // the clip's samples whose grab stays out, GrabMask
     float budgetMs_ = 0, sinceMs_ = 0, fixDeg_ = 0;
     std::deque<Moved> recent_;

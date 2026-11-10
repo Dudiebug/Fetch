@@ -6,6 +6,7 @@
 // Pure logic: client/Fetch writes the file and plays it. docs/CLONE.md.
 #pragma once
 #include "hsm_clone_events.h"
+#include "hsm_clone_input.h"
 #include "hsm_input.h"
 #include "hsm_owner.h"
 #include "hsm_protocol.h"
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -63,8 +65,10 @@ constexpr uint32_t kSameRows = 9, kRecallMoves = 64;
 // After kFaceGiveUpMs the clone fights as it stands, and does not turn so again for kFaceRestMs.
 constexpr float kFaceDeg = 75.f, kBehindDeg = 120.f, kFaceNearM = 3.f, kMisfitDeg = 60.f, kFacedDeg = 20.f, kFaceTurnDegS = 360.f, kFaceGiveUpMs = 1500.f, kFaceRestMs = 1000.f;
 // Events (hsm_clone_events.h) belong to the Play block just before them. An older Fetch skips a kind it does not know.
-// More holds the event kinds added since (hsm_clone_events.h): it follows the Events block.
-enum class Block : uint8_t { Play = 1, Name = 2, Kit = 3, Events = 4, More = 5 };
+// More holds the event kinds added since (hsm_clone_events.h): it follows the Events block. Input (hsm_clone_input.h): the
+// sensitivity and the keys of things other than the fighter, after More. Later (pre12 on): the event kinds added since pre11, and
+// every kind added after (hsm_clone_events.h LaterKind), after Input. A new kind of event goes in Later, never in a new block.
+enum class Block : uint8_t { Play = 1, Name = 2, Kit = 3, Events = 4, More = 5, Input = 6, Later = 7 };
 // Never played: the camera lock flips the player's own setting, the middle button is a debug trace, Talk opens nothing here.
 constexpr uint32_t kPlayable = ((1u << kActionCount) - 1) & ~(1u << uint32_t(Action::ToggleCameraLock) | 1u << uint32_t(Action::Talk) | 1u << uint32_t(Action::MiddleMouse));
 // How much each feature counts, tuned on held-out recordings (the cost squares the difference, so these are squared).
@@ -296,8 +300,27 @@ private:
     struct Tried { uint32_t first, last; float until; bool failed; };
     std::vector<Tried> tried_;
 };
-// What the clone minds when it picks a row (Db::Nearest): none of it, by default.
-struct Mind { const std::array<float, 2>* pain = nullptr; const Recall* recall = nullptr; float ms = 0; };
+// What one Db::Nearest weighed, for the overlay that shows the clone thinking: the cheapest rows it found, cheapest first, and the
+// row ahead of the one playing (its stay). Of a file over kScanRows rows, the cheapest are of the rows that Look scanned.
+constexpr int kTraceTop = 8;
+struct NearTrace {
+    struct Top { uint32_t row = 0; float raw = 0, recall = 1, cost = 0; };   // cost: raw * recall, as Nearest weighs the row
+    std::array<Top, kTraceTop> top{};
+    int n = 0;
+    uint32_t stay = 0;   // Db::rows(): none
+    float stayRaw = 0, stayRecall = 1, stayCost = 0;   // stayCost: raw * kStay * recall
+    void Clear(uint32_t none) { n = 0; stay = none; stayRaw = stayCost = 0; stayRecall = 1; }
+    // A row dearer than this cannot get in.
+    float limit() const { return n == kTraceTop ? top[kTraceTop - 1].cost : 3.4e38f; }
+    void Keep(const Top& t) {
+        if (!(t.cost < limit())) return;
+        int i = n < kTraceTop ? n++ : kTraceTop - 1;
+        for (; i > 0 && t.cost < top[size_t(i - 1)].cost; --i) top[size_t(i)] = top[size_t(i - 1)];
+        top[size_t(i)] = t;
+    }
+};
+// What the clone minds when it picks a row (Db::Nearest): none of it, by default. trace: what it weighed goes there.
+struct Mind { const std::array<float, 2>* pain = nullptr; const Recall* recall = nullptr; float ms = 0; NearTrace* trace = nullptr; };
 
 // A file name from a player's name or a clone= value: letters, digits, - and _ only, so it cannot leave Clones/.
 inline std::string FileStem(const std::string& name) {
@@ -327,15 +350,75 @@ inline std::vector<uint8_t> EncodeBlock(Block kind, const uint8_t* p, size_t n) 
     return o;
 }
 
+// A recording from before pre12 keeps no mouse sensitivity, but its samples show it. Off guard, Willie_BP turns the camera by
+// exactly TurnMouse x sensitivity x kTurnPerCount degrees (x 0.75, x the 0.5 of its Look Sensiticity, x UE's yaw scale of 2.5),
+// and while guarding by 1/kGuardTurn of that (x 0.005 x 10 x a Look Sensiticity eased to 0.25). Its turns come out at those two
+// ratios, and at others while the guard eases in and out or the turn meets the pelvis limit. The guess is the ratio most turns
+// share, each guarding turn counting at kGuardTurn times its own; pitch on those turns gives Invert Mouse by its sign. Too few
+// turns agree (no mouse turning, or not recorded by Fetch): not known, and the mouse plays at the player's, as before.
+class LookGuess {
+public:
+    static constexpr double kTurnPerCount = .9375, kGuardTurn = 80, kBin = .002;   // ratios within 0.2 % share a bin
+    static constexpr uint32_t kMinVotes = 32;
+    static constexpr double kMinShare = .03;   // of all turns
+    void Add(const Sample& s) {
+        if (s.end || !(std::fabs(s.axes[kTurn]) >= 1) || !(std::fabs(s.dyaw) > 1e-3f)) return;
+        const double q = double(s.dyaw) / s.axes[kTurn] / kTurnPerCount;
+        if (!(q > 1e-4 && q < 1e4)) return;
+        const bool pitched = std::fabs(s.axes[kLook]) >= 1 && std::fabs(s.dpitch) > 1e-3f;
+        votes_.push_back({int32_t(std::lround(std::log(q) / kBin)), float(q), pitched ? float(s.dpitch / s.axes[kLook] / kTurnPerCount) : 0.f});
+    }
+    LookScale Guess() const {
+        std::map<int32_t, uint32_t> bins;
+        for (const Vote& v : votes_) ++bins[v.bin];
+        auto at = [&](int32_t b) { const auto i = bins.find(b); return i == bins.end() ? 0u : i->second; };
+        auto around = [&](int32_t b) { return at(b - 1) + at(b) + at(b + 1); };
+        const int32_t fold = int32_t(std::lround(std::log(kGuardTurn) / kBin));
+        uint32_t best = 0;
+        int32_t bin = 0;
+        for (const auto& [b, n] : bins) {   // lowest first: a tie goes to the lower, so never to kGuardTurn x the answer
+            if (around(b) < kMinVotes) continue;
+            const uint32_t score = around(b) + around(b - fold);
+            if (score > best) { best = score; bin = b; }
+        }
+        if (best < kMinVotes || best < kMinShare * double(votes_.size())) return {};
+        std::vector<float> q;
+        std::vector<std::pair<float, float>> pitch;   // its pitch ratio, and its scale
+        for (const Vote& v : votes_) {
+            const float f = std::abs(v.bin - bin) <= 1 ? 1.f : std::abs(v.bin - (bin - fold)) <= 1 ? float(kGuardTurn) : 0.f;
+            if (f > 0) { q.push_back(v.q * f); pitch.push_back({v.pitch, f}); }
+        }
+        std::nth_element(q.begin(), q.begin() + std::ptrdiff_t(q.size() / 2), q.end());
+        const float sens = q[q.size() / 2];
+        uint32_t up = 0, down = 0;   // the game pitches against the mouse unless inverted
+        for (const auto& [p, f] : pitch)
+            if (std::fabs(std::fabs(p) * f / sens - 1) < .01f) ++(p > 0 ? up : down);
+        LookScale l = MakeLook(sens, up > down);
+        l.guessed = l.known();
+        return l;
+    }
+    size_t turns() const { return votes_.size(); }
+private:
+    struct Vote { int32_t bin; float q, pitch; };
+    std::vector<Vote> votes_;
+};
+
 class Db {
 public:
     // false: not a clone file of this version, or no play in it. A bad or cut block ends the reading; what came before stands.
     // Everything played is forced within what a player's input can be.
     bool Load(const uint8_t* data, size_t size) {
         rows_ = 0; feats_.clear(); starts_.clear(); samples_.clear(); name_.clear(); kit_.clear(); events_.clear(); blockStart_.clear(); blockKnown_.clear(); out_.clear(); leftOut_.fill(0); pain_.clear();
+        blockLook_.clear(); keys_.clear(); presses_.clear(); sources_.clear(); blockSource_.clear();
+        // Whose play each Play block is: the Name in effect when it loads. A merged file has each source's Name before its play
+        // (hsm_clone_merge.h); a Name with no play after it (the merged name, a rename) starts no source.
+        std::string nameNow;
+        bool named = false;      // a Name since the last Play block
         uint32_t playBase = 0, playSamples = 0;
         bool playOpen = false;   // the last block was a Play block that loaded: an Events block may follow it
+        bool inputOpen = false;  // no block but its Events and More since that Play block: its Input block may follow
         bool moreOpen = false;   // the last block was its Events block: a More block may follow
+        bool laterOpen = false;  // no block but its Events, More and Input since that Play block: its Later block may follow
         size_t blockEvents = 0;  // where that play's events start in events_
         // A play no More block followed is from before pre11, whose armour columns came from a slot table that was wrong (it read
         // greaves as a helmet): its rows say the armour is not known.
@@ -360,8 +443,11 @@ public:
                 playBase = uint32_t(samples_.size());
                 playRow = starts_.size(); playMore = false;
                 if (!AddPlay(d, len)) break;
-                playSamples = uint32_t(samples_.size()) - playBase; playOpen = true;
-                blockStart_.push_back(playBase); blockKnown_.push_back(0);
+                playSamples = uint32_t(samples_.size()) - playBase; playOpen = true; inputOpen = true; laterOpen = true;
+                blockStart_.push_back(playBase); blockKnown_.push_back(0); blockLook_.push_back({});
+                if (sources_.empty() || named) sources_.push_back(nameNow);
+                named = false;
+                blockSource_.push_back(uint32_t(sources_.size() - 1));
             } else if (kind == uint8_t(Block::Events)) {
                 std::vector<FightEvent> got;   // a bad Events block is left out alone: the play it goes with stands
                 blockEvents = events_.size();
@@ -375,7 +461,7 @@ public:
                 continue;
             } else if (kind == uint8_t(Block::More)) {
                 std::vector<FightEvent> got;   // like an Events block, and merged with it in time order
-                if (moreOpen && ReadEventsPayload(d, len, playSamples, got, true) && events_.size() + got.size() <= kMaxEvents) {
+                if (moreOpen && ReadEventsPayload(d, len, playSamples, got, kInMore) && events_.size() + got.size() <= kMaxEvents) {
                     playMore = true;
                     const size_t mid = events_.size();
                     for (FightEvent& e : got) { e.sample += playBase; events_.push_back(e); }
@@ -385,15 +471,36 @@ public:
                 moreOpen = false;
                 p += size_t(len) + 9;
                 continue;
+            } else if (kind == uint8_t(Block::Input)) {
+                InputLog got;   // a bad one is left out alone, like an Events block
+                if (inputOpen && ReadInputPayload(d, len, playSamples, got)) AddInput(got, playBase);
+                playOpen = moreOpen = inputOpen = false;
+                p += size_t(len) + 9;
+                continue;
+            } else if (kind == uint8_t(Block::Later)) {
+                std::vector<FightEvent> got;   // like a More block, for a play whose events are known
+                if (laterOpen && !blockKnown_.empty() && blockKnown_.back() && ReadEventsPayload(d, len, playSamples, got, kInLater) &&
+                    events_.size() + got.size() <= kMaxEvents) {
+                    const size_t mid = events_.size();
+                    for (FightEvent& e : got) { e.sample += playBase; events_.push_back(e); }
+                    std::inplace_merge(events_.begin() + std::ptrdiff_t(blockEvents), events_.begin() + std::ptrdiff_t(mid), events_.end(),
+                                       [](const FightEvent& a, const FightEvent& b) { return a.sample < b.sample; });
+                }
+                playOpen = moreOpen = inputOpen = laterOpen = false;
+                p += size_t(len) + 9;
+                continue;
             }
-            if (kind != uint8_t(Block::Play)) playOpen = false;
+            if (kind != uint8_t(Block::Play)) playOpen = inputOpen = laterOpen = false;
             moreOpen = false;
-            if (kind == uint8_t(Block::Name) && len <= kMaxName * 4) name_.assign(reinterpret_cast<const char*>(d), len);
+            if (kind == uint8_t(Block::Name) && len <= kMaxName * 4) { name_.assign(reinterpret_cast<const char*>(d), len); nameNow = name_; named = true; }
             if (kind == uint8_t(Block::Kit)) kit_.assign(d, d + len);
             p += size_t(len) + 9;
         }
         closePlay();
         rows_ = uint32_t(starts_.size());
+        if (sources_.size() == 1) sources_[0] = name_;   // one player's: the name it has now (a rename goes on the end)
+        PairKeys();
+        GuessLooks();
         MarkLeftOut();
         MarkPain();
         return rows_ > 0;
@@ -403,6 +510,44 @@ public:
     uint32_t LeftOutCount(Out why) const { return leftOut_[size_t(why)]; }
     const std::string& name() const { return name_; }
     const std::vector<uint8_t>& kit() const { return kit_; }   // the player's passport save: not checked here (CheckPassportSave)
+    // Whose play the file holds: one name for a recording of one player, each one merged for a merged file (hsm_clone_merge.h),
+    // in file order. A recording renamed and then recorded into further has the play before the rename under its old name.
+    const std::vector<std::string>& sources() const { return sources_; }
+    // The source a row's play came from: an index into sources().
+    uint32_t SourceOf(uint32_t row) const {
+        const size_t b = size_t(std::upper_bound(blockStart_.begin(), blockStart_.end(), starts_[row]) - blockStart_.begin());
+        return b ? blockSource_[b - 1] : 0;
+    }
+    const std::string& source(uint32_t row) const { return sources_[SourceOf(row)]; }
+    // Whether a Play block's payload is one Load takes (the rows within it, in order, finite; the samples finite), with its row
+    // and sample counts. Not whether it fits after what is loaded already.
+    static bool ValidPlay(const uint8_t* d, uint32_t len, uint32_t* rowsOut = nullptr, uint32_t* samplesOut = nullptr) {
+        constexpr size_t rowBytes = kFeatures * 4 + 4;
+        if (len < 8) return false;
+        uint32_t rows, samples;
+        std::memcpy(&rows, d, 4); std::memcpy(&samples, d + 4, 4);
+        if (!samples || rows > kMaxRows || samples > kMaxSamples || size_t(len) != 8 + rows * rowBytes + samples * sizeof(Sample)) return false;
+        const uint8_t* p = d + 8;
+        uint32_t last = 0;
+        for (uint32_t i = 0; i < rows; ++i, p += rowBytes) {
+            float f[kFeatures];
+            std::memcpy(f, p, kFeatures * 4);
+            uint32_t at;
+            std::memcpy(&at, p + kFeatures * 4, 4);
+            if (at >= samples || (i && at < last)) return false;
+            last = at;
+            for (int k = 0; k < kFeatures; ++k) if (!std::isfinite(f[k])) return false;
+        }
+        for (uint32_t i = 0; i < samples; ++i, p += sizeof(Sample)) {
+            Sample s;
+            std::memcpy(&s, p, sizeof s);
+            if (!std::isfinite(s.dtMs) || !std::isfinite(s.dyaw) || !std::isfinite(s.dpitch)) return false;
+            for (size_t a = 0; a < kAxisCount; ++a) if (!std::isfinite(s.axes[a])) return false;
+        }
+        if (rowsOut) *rowsOut = rows;
+        if (samplesOut) *samplesOut = samples;
+        return true;
+    }
     double PlayedSeconds() const { double ms = 0; for (const Sample& s : samples_) ms += s.dtMs; return ms / 1000; }
     uint32_t rows() const { return rows_; }
     // The fight's events in time order, sample counted over the whole file (sample(): the one each came before).
@@ -415,6 +560,21 @@ public:
     }
     const Sample& sample(uint32_t i) const { return samples_[i]; }
     uint32_t samples() const { return uint32_t(samples_.size()); }
+    // The sensitivity the play at this sample was recorded at (not known: a file from before pre12, or a bad Input block).
+    LookScale Look(uint32_t sample) const {
+        const size_t b = size_t(std::upper_bound(blockStart_.begin(), blockStart_.end(), sample) - blockStart_.begin());
+        return b ? blockLook_[b - 1] : LookScale{};
+    }
+    // The keys of things other than the fighter that the recording pressed (hsm_clone_input.h). release: the released end of
+    // the key pressed by `partner`; a press with a partner is held until its release plays. partner -1: a key with one end only.
+    struct Key { std::string cls, fn; int32_t partner = -1; bool release = false; };
+    struct KeyAt { uint32_t sample; uint16_t key; };   // the sample it came before, counted over the whole file
+    const std::vector<Key>& keys() const { return keys_; }
+    const std::vector<KeyAt>& presses() const { return presses_; }
+    // The first press at or after this sample.
+    size_t PressFrom(uint32_t sample) const {
+        return size_t(std::lower_bound(presses_.begin(), presses_.end(), sample, [](const KeyAt& k, uint32_t v) { return k.sample < v; }) - presses_.begin());
+    }
     uint32_t start(uint32_t row) const { return starts_[row]; }
     const float* row(uint32_t i) const { return &feats_[size_t(i) * kFeatures]; }
     // What hurt the player at this row (Pain::Now), as the clone's own pain is matched with it.
@@ -441,20 +601,78 @@ public:
     }
     // The closest row the clone plays; `stay` (a row, or rows()) gets the stay bonus and wins a tie. What it minds: its pain is
     // matched, and what it recalls multiplies a row's cost (never below it, so a row already too dear is not looked up).
+    // With a trace, a row's cost is worked out on past the best so far, up to the trace's limit, so the cheapest kTraceTop are
+    // known; the row picked is the same, as a cost cut short is never under the best so far and the rest only adds to it.
     uint32_t Nearest(const float* q, uint32_t stay, uint32_t from = 0, uint32_t count = kScanRows, const Mind& mind = {}) const {
         if (stay < rows_ && !Plays(stay)) stay = rows_;
         uint32_t best = stay;
         float cost = stay < rows_ ? Cost(stay, q, 3.4e38f, mind.pain) * kStay * (mind.recall ? mind.recall->Cost(stay, mind.ms, true) : 1.f) : 3.4e38f;
+        NearTrace* const t = mind.trace;
+        if (t) {
+            t->Clear(rows_);
+            if (stay < rows_) {
+                t->stay = stay;
+                t->stayRaw = Cost(stay, q, 3.4e38f, mind.pain);
+                t->stayRecall = mind.recall ? mind.recall->Cost(stay, mind.ms, true) : 1.f;
+                t->stayCost = cost;
+            }
+        }
         count = std::min(count, rows_);
         for (uint32_t n = 0, i = from % std::max(rows_, 1u); n < count; ++n, i = i + 1 == rows_ ? 0 : i + 1) {
             if (!Plays(i)) continue;
-            float c = Cost(i, q, cost, mind.pain);
+            const float limit = t ? std::max(cost, t->limit()) : cost;
+            float c = Cost(i, q, limit, mind.pain);
+            if (t && c < limit) {
+                const float r = mind.recall ? mind.recall->Cost(i, mind.ms, false) : 1.f;
+                t->Keep({i, c, r, c * r});
+            }
             if (c < cost && mind.recall) c *= mind.recall->Cost(i, mind.ms, false);
             if (c < cost) { cost = c; best = i; }
         }
         return best;
     }
 private:
+    static constexpr size_t kMaxKeys = 4096;
+    // Every play that keeps no sensitivity gets the one all of that player's show together (the guess wants many turns, more
+    // than a block has, and a block alone cannot tell guarding turns from the rest). One player's to a source: a merged file's
+    // players are guessed each on their own.
+    void GuessLooks() {
+        for (uint32_t src = 0; src < uint32_t(sources_.size()); ++src) {
+            LookGuess g;
+            for (size_t b = 0; b < blockStart_.size(); ++b) {
+                if (blockSource_[b] != src || blockLook_[b].known()) continue;
+                const uint32_t to = b + 1 < blockStart_.size() ? blockStart_[b + 1] : uint32_t(samples_.size());
+                for (uint32_t s = blockStart_[b]; s < to; ++s) g.Add(samples_[s]);
+            }
+            const LookScale l = g.Guess();
+            if (l.known())
+                for (size_t b = 0; b < blockLook_.size(); ++b)
+                    if (blockSource_[b] == src && !blockLook_[b].known()) blockLook_[b] = l;
+        }
+    }
+    void AddInput(const InputLog& got, uint32_t base) {
+        blockLook_.back() = got.look;
+        for (const KeyPress& k : got.presses) {
+            if (presses_.size() >= size_t(kMaxKeyPresses) * 4) return;
+            const std::string& cls = got.names[k.cls];
+            const std::string& fn = got.names[k.fn];
+            size_t id = 0;
+            while (id < keys_.size() && !(keys_[id].cls == cls && keys_[id].fn == fn)) ++id;
+            if (id == keys_.size()) { if (keys_.size() >= kMaxKeys) continue; keys_.push_back({cls, fn}); }
+            presses_.push_back({k.sample + base, uint16_t(id)});
+        }
+    }
+    // A key seen with exactly two ends (KeyOf): the one the file pressed first is the press, the other its release.
+    void PairKeys() {
+        for (size_t i = 0; i < keys_.size(); ++i) {
+            if (keys_[i].partner >= 0) continue;
+            int32_t other = -1, ends = 1;
+            for (size_t j = i + 1; j < keys_.size(); ++j)
+                if (keys_[j].cls == keys_[i].cls && KeyOf(keys_[j].fn) == KeyOf(keys_[i].fn)) { other = int32_t(j); ++ends; }
+            if (ends != 2) continue;
+            keys_[i].partner = other; keys_[size_t(other)].partner = int32_t(i); keys_[size_t(other)].release = true;
+        }
+    }
     bool Plays(uint32_t i) const { return out_[i] == uint8_t(Out::Played) || leftOut_[size_t(Out::Played)] == 0; }   // none left: all play
     static bool Quiet(const Sample& s) {
         if (s.buttons) return false;
@@ -503,43 +721,32 @@ private:
     }
     bool AddPlay(const uint8_t* d, uint32_t len) {
         constexpr size_t rowBytes = kFeatures * 4 + 4;
-        if (len < 8) return false;
         uint32_t rows, samples;
-        std::memcpy(&rows, d, 4); std::memcpy(&samples, d + 4, 4);
-        if (!samples || rows > kMaxRows || samples > kMaxSamples || size_t(len) != 8 + rows * rowBytes + samples * sizeof(Sample)) return false;
+        if (!ValidPlay(d, len, &rows, &samples)) return false;
         if (starts_.size() + rows > kMaxRows || samples_.size() + samples > kMaxSamples) return false;
         const uint32_t base = uint32_t(samples_.size());
         const size_t oldRows = starts_.size();
         const uint8_t* p = d + 8;
         feats_.resize((oldRows + rows) * kFeatures); starts_.resize(oldRows + rows); samples_.resize(base + size_t(samples));
-        bool ok = true;
-        for (uint32_t i = 0; i < rows && ok; ++i, p += rowBytes) {
-            float* f = &feats_[(oldRows + i) * kFeatures];
-            std::memcpy(f, p, kFeatures * 4);
+        for (uint32_t i = 0; i < rows; ++i, p += rowBytes) {
+            std::memcpy(&feats_[(oldRows + i) * kFeatures], p, kFeatures * 4);
             uint32_t at;
             std::memcpy(&at, p + kFeatures * 4, 4);
-            ok = at < samples && (!i || base + at >= starts_[oldRows + i - 1]);
             starts_[oldRows + i] = base + at;
-            for (int k = 0; k < kFeatures && ok; ++k) ok = std::isfinite(f[k]);
         }
-        if (ok) {
-            std::memcpy(&samples_[base], p, samples * sizeof(Sample));
-            for (uint32_t i = base; i < samples_.size() && ok; ++i) {
-                Sample& s = samples_[i];
-                ok = std::isfinite(s.dtMs) && std::isfinite(s.dyaw) && std::isfinite(s.dpitch);
-                for (size_t a = 0; a < kAxisCount; ++a) {
-                    ok = ok && std::isfinite(s.axes[a]);
-                    const float limit = IsDeltaAxis(Axis(a)) ? kAxisLimit : 1.f;
-                    s.axes[a] = std::clamp(s.axes[a], -limit, limit);
-                }
-                s.dtMs = std::clamp(s.dtMs, 1.f, kMaxDtMs);
-                s.dyaw = std::clamp(s.dyaw, -kMaxTurnDeg, kMaxTurnDeg); s.dpitch = std::clamp(s.dpitch, -kMaxTurnDeg, kMaxTurnDeg);
-                s.buttons &= kPlayable;
+        std::memcpy(&samples_[base], p, samples * sizeof(Sample));
+        for (uint32_t i = base; i < samples_.size(); ++i) {
+            Sample& s = samples_[i];
+            for (size_t a = 0; a < kAxisCount; ++a) {
+                const float limit = IsDeltaAxis(Axis(a)) ? kAxisLimit : 1.f;
+                s.axes[a] = std::clamp(s.axes[a], -limit, limit);
             }
-            samples_.back().end = 1;   // play never runs on into the next block
+            s.dtMs = std::clamp(s.dtMs, 1.f, kMaxDtMs);
+            s.dyaw = std::clamp(s.dyaw, -kMaxTurnDeg, kMaxTurnDeg); s.dpitch = std::clamp(s.dpitch, -kMaxTurnDeg, kMaxTurnDeg);
+            s.buttons &= kPlayable;
         }
-        if (!ok) { feats_.resize(oldRows * kFeatures); starts_.resize(oldRows); samples_.resize(base); }
-        return ok;
+        samples_.back().end = 1;   // play never runs on into the next block
+        return true;
     }
     uint32_t rows_ = 0;
     std::string name_;
@@ -550,12 +757,30 @@ private:
     std::vector<FightEvent> events_;
     std::vector<uint32_t> blockStart_;   // each Play block's first sample
     std::vector<uint8_t> blockKnown_;    // and whether its events came with it
+    std::vector<LookScale> blockLook_;   // and its sensitivity
+    std::vector<uint32_t> blockSource_;  // and whose play it is (sources_)
+    std::vector<std::string> sources_;
+    std::vector<Key> keys_;
+    std::vector<KeyAt> presses_;
     std::vector<uint8_t> out_;           // each row's Out
     std::vector<std::array<float, 2>> pain_;   // each row's Pain::Now
     std::array<uint32_t, 3> leftOut_{};  // rows by Out: [Played] is the rows that play
 };
 
-struct Output { std::array<float, kAxisCount> axes{}; uint32_t buttons = 0; float yaw = 0, pitch = 0; };
+// Why the clone plays what it does (Brain::lastLook). BestMatch: the row that fit best. KeptPlaying: the move playing fit best,
+// so it went on. Facing: the foe is off to the side or behind, and the clone turns to it before it plays anything.
+enum class LookWhy : uint8_t { None, BestMatch, KeptPlaying, Facing };
+// The last Look, with Brain::SetTrace on: what it saw, what it weighed and what it picked. seq goes up by one a Look.
+struct LookTrace {
+    NearTrace weighed;
+    uint32_t row = 0, stay = 0, seq = 0;   // row: the row picked, or the one it would have played (Facing); Db::rows(): none
+    LookWhy why = LookWhy::None;
+    std::array<float, 2> pain{};
+    float foeMetres = 0, foeDeg = 0;
+};
+
+// look: the sensitivity the mouse axes were recorded at (not known: play them at the sensitivity the game is set to).
+struct Output { std::array<float, kAxisCount> axes{}; uint32_t buttons = 0; float yaw = 0, pitch = 0; LookScale look; };
 
 class Brain {
 public:
@@ -565,6 +790,26 @@ public:
         playing_ = false; cursor_ = 0; budgetMs_ = 0; sinceQueryMs_ = 0; fixDeg_ = 0; recent_.clear();
         pain_.Forget(); recall_.Forget(); facing_ = false; faceSinceMs_ = 0; noFaceUntilMs_ = 0;   // a new fight: nothing minded
         turns_ = hurtMoves_ = 0;
+        held_.clear(); keys_.clear(); keyAt_ = 0;   // a new fighter: nothing of it is held
+        moveFrom_ = 0;
+    }
+    // Keeps what each Look weighed (lastLook): only the overlay wants it, and it costs a little time a Look.
+    void SetTrace(bool on) { trace_ = on; }
+    bool tracing() const { return trace_; }
+    const LookTrace& lastLook() const { return look_; }
+    // How far into the move playing the clone is: from the row its move started at (a move that goes on counts on).
+    float ClipMs() const {
+        float ms = 0;
+        for (uint32_t s = moveFrom_, n = 0; s < cursor_ && s < db_.samples() && n < kClipMsSamples; ++s, ++n) ms += db_.sample(s).dtMs;
+        return ms;
+    }
+    // The keys (Db::keys) to play since the last call, in order: what the clip pressed, and the release of every key it held when
+    // the clip stops (a new move, the clip's end, turning to the foe, ReleaseKeys).
+    std::vector<uint16_t> TakeKeys() { std::vector<uint16_t> k; k.swap(keys_); return k; }
+    // Lets go of every key held: the fighter is down or leaves.
+    void ReleaseKeys() {
+        for (uint16_t k : held_) keys_.push_back(uint16_t(db_.keys()[k].partner));
+        held_.clear();
     }
     bool NeedsLook() const { return !playing_ || sinceQueryMs_ >= kQueryMs; }
     // The mouse movement of the last kPrevMs, for Features.
@@ -593,23 +838,33 @@ public:
         const float now = FoeBearingDeg(seen);
         sinceQueryMs_ = 0;
         if (facing_) {
-            if (apart && std::fabs(now) > kFacedDeg && clockMs_ - faceSinceMs_ < kFaceGiveUpMs) { fixDeg_ = now; return; }
+            if (apart && std::fabs(now) > kFacedDeg && clockMs_ - faceSinceMs_ < kFaceGiveUpMs) {
+                fixDeg_ = now;
+                if (trace_) { look_.weighed.Clear(db_.rows()); Noted(LookWhy::Facing, db_.rows(), db_.rows(), pain, seen); }
+                return;
+            }
             facing_ = false;
             noFaceUntilMs_ = clockMs_ + kFaceRestMs;
         }
         const uint32_t stay = playing_ ? db_.RowAhead(cursor_) : db_.rows();
         if (stay < db_.rows()) recall_.Picked(stay, clockMs_, true);   // how far the move playing got: going back is a repeat
-        const uint32_t row = db_.Nearest(seen, stay, scan_, kScanRows, Mind{&pain, &recall_, clockMs_});
+        const uint32_t row = db_.Nearest(seen, stay, scan_, kScanRows, Mind{&pain, &recall_, clockMs_, trace_ ? &look_.weighed : nullptr});
         scan_ = uint32_t((uint64_t(scan_) + kScanRows) % std::max(db_.rows(), 1u));
         const float then = FoeBearingDeg(db_.row(row));
         const bool misfit = std::fabs(detail::Wrap(now - then)) > kMisfitDeg, hurtThere = pain[1] > 0.f;
         if (apart && std::fabs(now) > kFaceDeg && (misfit || hurtThere || (std::fabs(now) > kBehindDeg && FoeMetres(seen) <= kFaceNearM)) && clockMs_ >= noFaceUntilMs_) {
             facing_ = true; faceSinceMs_ = clockMs_; playing_ = false; fixDeg_ = now; ++turns_;
+            ReleaseKeys();
+            if (trace_) Noted(LookWhy::Facing, row, stay, pain, seen);
             return;
         }
-        recall_.Picked(row, clockMs_, playing_ && row == stay);
+        const bool on = playing_ && row == stay;
+        if (trace_) Noted(on ? LookWhy::KeptPlaying : LookWhy::BestMatch, row, stay, pain, seen);
+        recall_.Picked(row, clockMs_, on);
         fixDeg_ = apart ? std::clamp(detail::Wrap(now - then), -kMaxTurnFixDeg, kMaxTurnFixDeg) : 0.f;
         cursor_ = db_.start(row); playing_ = true; budgetMs_ = 0;
+        // The move playing goes on: the presses of the few samples stepped over still play, in the next Step.
+        if (!on) { ReleaseKeys(); keyAt_ = db_.PressFrom(cursor_); moveFrom_ = cursor_; }
     }
     // One game frame: the samples its time covers, mouse summed, the rest as of the last one.
     Output Step(float dtMs) {
@@ -628,13 +883,17 @@ public:
         o.yaw += fixDeg_ * share;
         fixDeg_ -= fixDeg_ * share;
         budgetMs_ += dtMs;
+        uint32_t last = db_.samples();
         for (uint32_t n = 0; playing_ && n < kMaxStepSamples && budgetMs_ >= db_.sample(cursor_).dtMs; ++n) {
             const Sample& s = db_.sample(cursor_);
             budgetMs_ -= s.dtMs;
+            for (const auto& p = db_.presses(); keyAt_ < p.size() && p[keyAt_].sample <= cursor_; ++keyAt_) Press(p[keyAt_].key);
             for (size_t a = 0; a < kAxisCount; ++a) o.axes[a] = IsDeltaAxis(Axis(a)) ? o.axes[a] + s.axes[a] : s.axes[a];
             o.yaw += s.dyaw; o.pitch += s.dpitch; o.buttons = s.buttons;
-            if (s.end || ++cursor_ >= db_.samples()) playing_ = false;
+            last = cursor_;
+            if (s.end || ++cursor_ >= db_.samples()) { playing_ = false; ReleaseKeys(); }
         }
+        if (last < db_.samples()) o.look = db_.Look(last);
         budgetMs_ = std::min(budgetMs_, kMaxDtMs);
         o.yaw = detail::Wrap(o.yaw);
         o.pitch = std::clamp(o.pitch, -80.f, 80.f);
@@ -647,17 +906,40 @@ public:
     }
 private:
     static constexpr int kFoeX = 17;   // Features: the foe's pelvis, x then y
+    static constexpr uint32_t kClipMsSamples = 1u << 14;   // ClipMs adds up no more than this (about 4 minutes)
+    void Noted(LookWhy why, uint32_t row, uint32_t stay, const std::array<float, 2>& pain, const float* seen) {
+        look_.why = why; look_.row = row; look_.stay = stay; look_.pain = pain;
+        look_.foeMetres = FoeMetres(seen); look_.foeDeg = FoeBearingDeg(seen);
+        ++look_.seq;
+    }
+    // A key of the clip: a release only if its press is held, a press held already not again.
+    void Press(uint16_t k) {
+        const Db::Key& key = db_.keys()[k];
+        if (key.release) {
+            const auto h = std::find(held_.begin(), held_.end(), uint16_t(key.partner));
+            if (h == held_.end()) return;
+            held_.erase(h);
+        } else if (key.partner >= 0) {
+            if (std::find(held_.begin(), held_.end(), k) != held_.end()) return;
+            held_.push_back(k);
+        }
+        keys_.push_back(k);
+    }
     struct Moved { float ms, turn, look; };
     const Db& db_;
     Output out_;
     bool playing_ = false, facing_ = false;
-    uint32_t cursor_ = 0, scan_ = 0;
+    uint32_t cursor_ = 0, scan_ = 0, moveFrom_ = 0;   // moveFrom_: the sample the move playing started at
     float budgetMs_ = 0, sinceQueryMs_ = 0, fixDeg_ = 0;
     float clockMs_ = 0, faceSinceMs_ = 0, noFaceUntilMs_ = 0;   // the fight's time, by Step
+    bool trace_ = false;
+    LookTrace look_;
     uint32_t turns_ = 0, hurtMoves_ = 0;
     std::deque<Moved> recent_;
     Pain pain_;
     Recall recall_;
+    std::vector<uint16_t> held_, keys_;   // presses held; keys to play
+    size_t keyAt_ = 0;                    // the clip's next press (Db::presses)
 };
 
 // One game frame of the player's input, as the file keeps it.
@@ -686,6 +968,11 @@ public:
         events_.push_back(e);
     }
     const std::vector<FightEvent>& pending() const { return events_; }
+    // The sensitivity the game is set to. A change belongs to the next block: Take first, then this.
+    void SetLook(LookScale l) { input_.look = l; }
+    LookScale look() const { return input_.look; }
+    // A key of something other than the fighter, pressed now, before the next sample (hsm_clone_input.h). false: not kept.
+    bool NoteKey(const std::string& cls, const std::string& fn) { return input_.Press(uint32_t(samples_.size()), cls, fn); }
     // foeId: who the foe is, so that a new one's wounds are not taken for a hit. Damage and cuts since the row before are noted.
     void Row(const Seen& me, const Seen& foe, const sync::V3* loose, uint64_t foeId = 0) {
         float turn = 0, look = 0;
@@ -727,15 +1014,23 @@ public:
         }
         std::vector<uint8_t> out = rows ? EncodeBlock(Block::Play, p.data(), p.size()) : std::vector<uint8_t>{};
         if (rows) {   // even with none: then the play is known to have had none (Db::EventsKnown)
-            std::vector<FightEvent> old, more;
-            for (const FightEvent& e : events_) (MoreKind(e.kind) ? more : old).push_back(e);
+            std::vector<FightEvent> old, more, later;
+            for (const FightEvent& e : events_) (LaterKind(e.kind) ? later : MoreKind(e.kind) ? more : old).push_back(e);
             for (const auto& [kind, list] : {std::pair{Block::Events, &old}, std::pair{Block::More, &more}}) {
                 const std::vector<uint8_t> e = EventsPayload(*list);
                 const std::vector<uint8_t> b = EncodeBlock(kind, e.data(), e.size());
                 out.insert(out.end(), b.begin(), b.end());
             }
+            // Always, so the play's sensitivity is known. A press after the last sample has no play to go with.
+            std::erase_if(input_.presses, [&](const KeyPress& k) { return k.sample >= samples_.size(); });
+            const std::vector<uint8_t> in = InputPayload(input_);
+            const std::vector<uint8_t> b = EncodeBlock(Block::Input, in.data(), in.size());
+            out.insert(out.end(), b.begin(), b.end());
+            const std::vector<uint8_t> e = EventsPayload(later);   // last: a reader before pre12 passes over it
+            const std::vector<uint8_t> l = EncodeBlock(Block::Later, e.data(), e.size());
+            out.insert(out.end(), l.begin(), l.end());
         }
-        rows_.clear(); starts_.clear(); samples_.clear(); events_.clear();
+        rows_.clear(); starts_.clear(); samples_.clear(); events_.clear(); input_.Clear();
         return out;
     }
 private:
@@ -748,6 +1043,7 @@ private:
     struct Health { std::array<float, kParts> parts{}; uint32_t severed = 0; bool known = false; };
     std::array<Health, 2> health_{};   // kMe, kFoe: for the Damage and Sever events
     std::vector<FightEvent> events_;
+    InputLog input_;
     uint64_t foeId_ = 0;
     Played last_{};
     bool have_ = false;

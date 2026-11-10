@@ -14,16 +14,21 @@ import hsmrec
 MAGIC = b"HSMCLONE"
 VERSION = 3
 FEATURES = 127
-PLAY, NAME, KIT, EVENTS, MORE = 1, 2, 3, 4, 5
+PLAY, NAME, KIT, EVENTS, MORE, INPUT, LATER = 1, 2, 3, 4, 5, 6, 7
 # shared/clone/hsm_clone_events.h Ev: one 16-byte FightEvent each (u32 sample, u8 kind, who, hand, part, f32 a, b). An Events
-# block has the kinds up to Death; the More block after it (Fetch pre11 on) the kinds added since.
+# block has the kinds up to Death; the More block after it (Fetch pre11 on) the kinds added then; the Later block after the Input
+# block (pre12 on) every kind added since, where a kind newer than this tool knows is passed over.
 EV_NAMES = ["?", "Hit", "Clash", "Damage", "Sever", "ParryOn", "ParryOff", "Thrust", "Kick", "GrabOn", "GrabOff",
             "GrabbedOn", "GrabbedOff", "PickUp", "Drop", "StuckOn", "StuckOff", "Fall", "GetUp", "Death",
-            "Strike", "Armour", "Stage"]
-EV_LAST, EV_FIRST_MORE = 19, 20
-STRIKE, STAGE = 20, 22
+            "Strike", "Armour", "Stage", "Parried"]
+EV_LAST, EV_FIRST_MORE, EV_LAST_MORE, EV_FIRST_LATER = 19, 20, 22, 23
+STRIKE, STAGE, PARRIED = 20, 22, 23
 STRIKE_HOW = ["bare", "gap", "beat", "held"]   # hsm_clone_armor.h StrikeClass
 EVENT = struct.Struct("<I4B2f")
+# shared/clone/hsm_clone_input.h: the Input block after More (Fetch pre12 on): the mouse sensitivity, and the keys of things other
+# than the fighter by class and function name.
+INPUT_VERSION, MAX_KEY_NAMES, MAX_KEY_PRESSES, MAX_KEY_NAME = 1, 1024, 1000000, 96
+KEY_NAME = re.compile(r"[A-Za-z0-9_]{1,%d}" % MAX_KEY_NAME)
 STEP = 3            # one row every third sample (~18 a second); the stream keeps every sample
 MAX_RANGE = 1500.0  # uu: further than this nobody is fighting
 PREV_MS = 150.0
@@ -286,9 +291,9 @@ def read_blocks(data):
         p += n + 9
 
 
-def events_of(d, samples, more=False):
-    """An Events (or, more: a More) block's events as (sample, kind, who, hand, part, a, b), or None when the Fetch that reads
-    it would refuse it."""
+def events_of(d, samples, more=False, later=False):
+    """An Events (or, more: a More; later: a Later) block's events as (sample, kind, who, hand, part, a, b), or None when the
+    Fetch that reads it would refuse it. A Later block's kinds newer than this tool are left out."""
     if len(d) < 4:
         return None
     n = struct.unpack_from("<I", d)[0]
@@ -297,7 +302,13 @@ def events_of(d, samples, more=False):
     got, last = [], 0
     for e in EVENT.iter_unpack(d[4:]):
         sample, kind, who, hand, _, a, b = e
-        known = EV_FIRST_MORE <= kind < len(EV_NAMES) if more else 1 <= kind <= EV_LAST
+        if sample > samples or sample < last:
+            return None
+        last = sample
+        if later and kind >= len(EV_NAMES):
+            continue
+        known = (EV_FIRST_LATER <= kind < len(EV_NAMES) if later else EV_FIRST_MORE <= kind <= EV_LAST_MORE if more
+                 else 1 <= kind <= EV_LAST)
         if not known or who > 1 or sample > samples or sample < last or (hand != 0xFF and hand > 2):
             return None
         if not (math.isfinite(a) and math.isfinite(b)) or abs(a) > 1e9 or abs(b) > 1e9:
@@ -307,13 +318,141 @@ def events_of(d, samples, more=False):
     return got
 
 
+def input_of(d, samples):
+    """An Input block as (sensitivity or None, invert, names, [(sample, cls, fn)]), or None when the Fetch that reads it would
+    refuse it."""
+    if len(d) < 16:
+        return None
+    version, sens, invert, names = struct.unpack_from("<If B3x I", d)
+    if version != INPUT_VERSION or invert > 1 or names > MAX_KEY_NAMES:
+        return None
+    p, got = 16, []
+    for _ in range(names):
+        if p >= len(d) or p + 1 + d[p] > len(d):
+            return None
+        name = d[p + 1:p + 1 + d[p]].decode("ascii", "replace")
+        if not KEY_NAME.fullmatch(name):
+            return None
+        got.append(name)
+        p += 1 + d[p]
+    if len(d) - p < 4:
+        return None
+    n = struct.unpack_from("<I", d, p)[0]
+    p += 4
+    if n > MAX_KEY_PRESSES or len(d) - p != n * 8:
+        return None
+    presses, last = [], 0
+    for sample, cls, fn in struct.iter_unpack("<I2H", d[p:]):
+        if sample >= samples or sample < last or cls >= names or fn >= names:
+            return None
+        presses.append((sample, cls, fn))
+        last = sample
+    known = math.isfinite(sens) and 0.01 <= sens <= 100
+    return (sens if known else None, bool(invert), got, presses)
+
+
+# shared/clone/hsm_clone.h LookGuess: a play that keeps no sensitivity gets the one its turns show. Off guard the camera turns by
+# TurnMouse x sensitivity x 0.9375, guarding by an 80th of that; the ratio most turns share, each guarding one counted at 80 times
+# its own, is the sensitivity, and the sign of the pitch on those turns says whether it is inverted. Mirrors the C++.
+GUESS_TURN, GUESS_GUARD, GUESS_BIN, GUESS_MIN, GUESS_SHARE = 0.9375, 80.0, 0.002, 32, 0.03
+TURN_AXIS, LOOK_AXIS = 2, 3
+
+
+def _lround(x):
+    return int(math.copysign(math.floor(abs(x) + 0.5), x))
+
+
+def _samples(d):
+    """A Play block's samples as Db loads them: the last one ends its stretch of play."""
+    got = list(struct.iter_unpack("<3f10f2I", d))
+    if got:
+        got[-1] = got[-1][:14] + (1,)
+    return got
+
+
+def guess_look(samples):
+    """samples: (dt, dyaw, dpitch, axes..., buttons, end) tuples of the plays that keep no sensitivity. (sens, invert) or None."""
+    votes = []
+    for x in samples:
+        dyaw, dpitch, turn, look, end = x[1], x[2], x[3 + TURN_AXIS], x[3 + LOOK_AXIS], x[14]
+        if end or not abs(turn) >= 1 or not abs(dyaw) > 1e-3:
+            continue
+        q = dyaw / turn / GUESS_TURN
+        if not 1e-4 < q < 1e4:
+            continue
+        pitch = dpitch / look / GUESS_TURN if abs(look) >= 1 and abs(dpitch) > 1e-3 else 0.0
+        votes.append((_lround(math.log(q) / GUESS_BIN), q, pitch))
+    bins = {}
+    for b, _, _ in votes:
+        bins[b] = bins.get(b, 0) + 1
+    near = lambda b: bins.get(b - 1, 0) + bins.get(b, 0) + bins.get(b + 1, 0)
+    fold = _lround(math.log(GUESS_GUARD) / GUESS_BIN)
+    best, at = 0, 0
+    for b in sorted(bins):
+        if near(b) < GUESS_MIN:
+            continue
+        score = near(b) + near(b - fold)
+        if score > best:
+            best, at = score, b
+    if best < GUESS_MIN or best < GUESS_SHARE * len(votes):
+        return None
+    got = []
+    for b, q, p in votes:
+        f = 1.0 if abs(b - at) <= 1 else GUESS_GUARD if abs(b - (at - fold)) <= 1 else 0.0
+        if f:
+            got.append((q * f, p, f))
+    sens = sorted(q for q, _, _ in got)[len(got) // 2]
+    up = down = 0
+    for _, p, f in got:
+        if abs(abs(p) * f / sens - 1) < 0.01:
+            if p > 0:
+                up += 1
+            else:
+                down += 1
+    return (sens, up > down) if 0.01 <= sens <= 100 else None
+
+
 def info(path):
     with open(path, "rb") as f:
         data = f.read()
     name, rows, samples, ms, kit = "?", 0, 0, 0.0, 0
     counts, refused, last_play, more_play = {}, 0, None, None
-    strikes, stages = {}, 0
+    strikes, stages, parries = {}, 0, [0, 0, 0]   # made, taken, full (1: the blade's cut stopped)
+    later_play = None   # a play whose events are known, until a block other than its More and Input: its Later block may follow
+    input_play, looks, unknown, keys = None, {}, 0, {}
+    plays = []   # each Play block's samples, whether its Input block keeps its sensitivity, and its source
+    # Whose play each Play block is, as Fetch reads it (clone::Db::sources): the Name in effect at it. A Name with no play after it
+    # (a rename, a merged file's own name) starts no source.
+    sources, name_now, named = [], "", False   # sources: [name, plays, ms]
     for kind, d in read_blocks(data):
+        if kind == INPUT:
+            got = input_of(d, input_play) if input_play is not None else None
+            if got is None:
+                refused += 1
+            elif got[0] is None:
+                unknown += 1
+            else:
+                look = f"{got[0]:.2f}{' inverted' if got[1] else ''}"
+                looks[look] = looks.get(look, 0) + 1
+                plays[-1][1] = True
+            for _, cls, fn in (got or (0, 0, [], []))[3]:
+                key = f"{got[2][cls]}.{got[2][fn]}"
+                keys[key] = keys.get(key, 0) + 1
+            input_play, last_play, more_play = None, None, None
+            continue
+        if kind == LATER:
+            got = events_of(d, later_play, later=True) if later_play is not None else None
+            if got is None:
+                refused += 1
+            for e in got or []:
+                counts[e[1]] = counts.get(e[1], 0) + 1
+                if e[1] == PARRIED:
+                    parries[0 if e[2] == 0 else 1] += 1
+                    parries[2] += e[6] >= 1
+            input_play, last_play, more_play, later_play = None, None, None, None
+            continue
+        if kind == PLAY:
+            input_play = later_play = None
         if kind in (EVENTS, MORE):
             samples_of = last_play if kind == EVENTS else more_play
             got = events_of(d, samples_of, kind == MORE) if samples_of is not None else None
@@ -327,20 +466,33 @@ def info(path):
                 elif e[1] == STAGE and e[4] != 0xFF:
                     stages += 1
             more_play = last_play if kind == EVENTS and got is not None else None
+            if kind == EVENTS:
+                later_play = more_play
             last_play = None
             continue
-        last_play, more_play = None, None
+        last_play, more_play, input_play, later_play = None, None, None, None
         if kind == NAME:
             name = d.decode("utf-8", "replace")
+            if len(d) <= 32 * 4:
+                name_now, named = name, True
         elif kind == KIT:
             kit = len(d)
         elif kind == PLAY:
             r, s = struct.unpack_from("<2I", d)
             rows, samples = rows + r, samples + s
             at = 8 + r * (FEATURES * 4 + 4)
-            ms += sum(x[0] for x in struct.iter_unpack(f"<f{SAMPLE - 4}x", d[at:]))
-            last_play = s
+            block_ms = sum(x[0] for x in struct.iter_unpack(f"<f{SAMPLE - 4}x", d[at:]))
+            ms += block_ms
+            if not sources or named:
+                sources.append([name_now, 0, 0.0])
+            named = False
+            sources[-1][1] += 1
+            sources[-1][2] += block_ms
+            plays.append([d[at:at + s * SAMPLE], False, len(sources) - 1])
+            last_play = input_play = s
     print(f"{path}: {name}, {ms / 3600000:.2f} h of play, {rows} rows, {samples} samples, {len(data) / 1e6:.1f} MB, kit {kit} bytes")
+    if len(sources) > 1:
+        print("  play of: " + ", ".join(f"{n or '(no name)'} ({p} play{'s' if p > 1 else ''}, {t / 3600000:.2f} h)" for n, p, t in sources))
     if counts or refused:
         listed = ", ".join(f"{EV_NAMES[k]} {counts[k]}" for k in sorted(counts))
         print(f"  events: {sum(counts.values())} ({listed or 'none'}){f', {refused} block(s) refused' if refused else ''}")
@@ -348,6 +500,32 @@ def info(path):
         print("  your strikes: " + ", ".join(f"{h} {strikes[h]}" for h in STRIKE_HOW if h in strikes))
     if stages:
         print(f"  training stages: {stages}")
+    if any(parries):
+        print(f"  parries: {parries[0]} made, {parries[1]} taken ({parries[2]} full)")
+    rest = [p for p, kept, _ in plays if not kept]
+    # Each player's sensitivity is read off their own turns (a merged file's players each on their own).
+    guesses = []   # (guess, blocks) per source with play that keeps none
+    for src in range(len(sources)):
+        mine = [p for p, kept, at in plays if not kept and at == src]
+        if mine:
+            guesses.append((guess_look(x for p in mine for x in _samples(p)), len(mine)))
+    guess = guesses[0][0] if len(guesses) == 1 else next((g for g, _ in guesses if g), None)
+    shown = f"{guess[0]:.2f}{' inverted' if guess[1] else ''} read off its turns" if guess else None
+    if looks or unknown or len(guesses) > 1:
+        listed = ", ".join(f"{k} ({n} block{'s' if n > 1 else ''})" for k, n in sorted(looks.items()))
+        for g, n in guesses:
+            if g:
+                listed += f"{', ' if listed else ''}{g[0]:.2f}{' inverted' if g[1] else ''} read off its turns ({n} block(s))"
+            elif looks or len(guesses) > 1:
+                listed += f"{', ' if listed else ''}not known in {n} block(s)"
+        print(f"  mouse sensitivity: {listed or 'not known'}")
+    elif guess:
+        print(f"  mouse sensitivity: not saved (a recording from before pre12), but {shown}: a clone plays it at that")
+    else:
+        print("  mouse sensitivity: not saved (a recording from before pre12), and its turns do not show it: a clone plays it at yours")
+    if keys:
+        top = sorted(keys.items(), key=lambda kv: -kv[1])[:8]
+        print(f"  keys of carried things: {sum(keys.values())} presses of {len(keys)} (" + ", ".join(f"{k} {n}" for k, n in top) + ")")
     return counts
 
 

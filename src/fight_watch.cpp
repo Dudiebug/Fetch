@@ -34,6 +34,14 @@ constexpr double kStrikeGapMs = 150;     // calls of one striking component on o
 constexpr double kReadArmourMs = 2000;
 constexpr int kStrikeLines = 12;         // strikes logged in a level, for a tester
 constexpr size_t kOpenStrikes = 32;
+// The game's parry (ModularWeaponBP's weapon hit, ModularWeaponBP.cpp:914): a blade that meets the weapon of a fighter who guards,
+// wins the weapon-skill roll and is not falling or out on their feet adds to its own Just Parried Rate (a full one stops its cut),
+// and then calls StopThatBlade on the fighter holding it. Blueprint to Blueprint, so it is watched in the script VM.
+constexpr const char* kParryFunction = "StopThatBlade";
+constexpr const char* kParryOwner = "fetch-parry";
+constexpr const char* kParryRate = "Just Parried Rate";
+constexpr double kParryGapMs = 150;      // catches of one blade this close together are one parry
+constexpr int kParryLines = 12;          // parries logged in a level, for a tester
 }  // namespace
 
 // One Deal Complex Damage observer for every FightWatch (the recorder's and the clone's): two would each set and read the
@@ -89,10 +97,90 @@ struct StrikeHub {
     }
 };
 
+// One StopThatBlade observer for every FightWatch, like the strike watch.
+struct ParryHub {
+    static bool& on() { static bool v = true; return v; }
+    static bool& installed() { static bool v = false; return v; }
+    static std::vector<FightWatch*>& watches() { static std::vector<FightWatch*> v; return v; }
+    static void Add(FightWatch* w) {
+        watches().push_back(w);
+        if (installed() || !on()) return;
+        installed() = true;
+        if (!InstallScriptHook()) { HSM_LOG("clone: parries: the script VM hook is not available on this build; no Parried events"); return; }
+        const int n = ObserveScript(kParryOwner, kStrikeClass, kParryFunction, Caught);
+        HSM_LOG("clone: parries: watching %s (%d function%s)", kParryFunction, n, n == 1 ? "" : "s");
+    }
+    static void Caught(ScriptCall& call) {
+        double power = 0;
+        call.get("Power", power);
+        for (FightWatch* w : watches()) w->Caught(call.self(), power);
+    }
+};
+
 void FightWatch::SetStrikes(bool on) { StrikeHub::on() = on; }
+void FightWatch::SetParries(bool on) { ParryHub::on() = on; }
 void FightWatch::LevelLoaded() {
     StrikeHub::marks().clear();
-    if (StrikeHub::installed() && ScriptHookActive()) ResolveScriptHooks();
+    if ((StrikeHub::installed() || ParryHub::installed()) && ScriptHookActive()) ResolveScriptHooks();
+}
+
+// A held weapon's Just Parried Rate (0 to 1), or -1 when it has none (fists, an older build).
+static double ParryRate(UObject* weapon) {
+    static UClass* cls = nullptr;
+    static int32_t off = -1;
+    UClass* c = weapon ? ClassOf(weapon) : nullptr;
+    if (!c) return -1;
+    if (c != cls) {
+        cls = c;
+        FProperty* p = FindProperty(c, kParryRate);
+        off = p && PropertyType(p) == "DoubleProperty" ? PropertyOffset(p) : -1;
+    }
+    if (off < 0) return -1;
+    double r = 0;
+    std::memcpy(&r, reinterpret_cast<const uint8_t*>(weapon) + off, sizeof r);
+    return std::isfinite(r) ? std::clamp(r, 0.0, 1.0) : -1;
+}
+
+// StopThatBlade on self: one of the blades it holds was caught. Which one: the one whose parry is fullest, as the game just
+// added to it. Catches a few ms apart fold into one parry, kept at its fullest and fastest.
+void FightWatch::Caught(UObject* self, double power) {
+    uint8_t s = 2;
+    for (uint8_t i = 0; i < 2; ++i) if (self && self == side_[i].willie) s = i;
+    if (s > 1 || !live_()) return;
+    uint8_t hand = clone::kNoPart;
+    double rate = -1;
+    for (uint8_t h = 0; h < 2; ++h) {
+        const double r = ParryRate(side_[s].weapon[h]);
+        if (r > rate) { rate = r; hand = h; }
+    }
+    const double now = SteadyMs();
+    OpenParry* o = nullptr;
+    for (OpenParry& p : parries_) if (p.caught == s && p.hand == hand && now - p.lastMs < kParryGapMs) o = &p;
+    if (!o) {
+        if (parries_.size() >= 8) FlushParries(now + 1);
+        parries_.push_back({});
+        o = &parries_.back();
+        o->caught = s; o->hand = hand;
+    }
+    o->lastMs = now; ++o->catches;
+    o->power = std::max(o->power, std::isfinite(power) ? float(std::clamp(power, 0.0, 1e6)) : 0.f);
+    o->rate = std::max(o->rate, float(std::max(rate, 0.0)));
+}
+
+// Parries with no catch for a while are over: each is a Parried event for the side that caught the blade.
+void FightWatch::FlushParries(double olderThanMs) {
+    for (size_t i = 0; i < parries_.size();) {
+        const OpenParry o = parries_[i];
+        if (o.lastMs >= olderThanMs) { ++i; continue; }
+        parries_.erase(parries_.begin() + std::ptrdiff_t(i));
+        const uint8_t by = uint8_t(1 - o.caught);
+        sink_(clone::MakeEvent(clone::Ev::Parried, by, clone::kNoHand, o.hand, o.power, o.rate));
+        if (parryLines_ < kParryLines) {
+            ++parryLines_;
+            HSM_LOG("clone: parry: %s caught the %s blade (%s hand) speed=%.0f full=%.2f catches=%d", by == clone::kMe ? "me" : "foe",
+                    by == clone::kMe ? "foe's" : "my", o.hand == 0 ? "R" : o.hand == 1 ? "L" : "?", double(o.power), double(o.rate), o.catches);
+        }
+    }
 }
 
 // The striker's hand from the component that struck: its actor is the other side's body or one of its held weapons.
@@ -255,6 +343,7 @@ clone::Doing FightWatch::Flags::Read(UObject* willie, UObject* other, UObject* (
 // edges yet.
 void FightWatch::Read(UObject* me, UObject* foe) {
     FlushStrikes(SteadyMs() - kStrikeGapMs);
+    FlushParries(SteadyMs() - kParryGapMs);
     UObject* who[2] = {me, foe};
     for (uint8_t s = 0; s < 2; ++s) {
         Side& side = side_[s];
@@ -273,20 +362,21 @@ void FightWatch::Read(UObject* me, UObject* foe) {
 
 void FightWatch::Forget() {
     for (Side& s : side_) { s.known = false; s.willie = nullptr; s.weapon[0] = s.weapon[1] = nullptr; }
-    strikes_.clear(); asked_.clear();
+    strikes_.clear(); asked_.clear(); parries_.clear();
     for (ArmourSide& a : armour_) a = ArmourSide{};
 }
 
 void FightWatch::ForgetLevel() {
     Forget();
     hitParams_.clear(); hitGate_.Forget(); clashGate_.Forget();
-    strikeLines_ = 0;
+    strikeLines_ = parryLines_ = 0;
 }
 
 void FightWatch::Hook() {
     if (hooked_) return;
     hooked_ = true;
     StrikeHub::Add(this);
+    ParryHub::Add(this);
     HookFunctionsMatching([](const std::string& n) { return n.find("ComponentHitSignature") != std::string::npos; },
                           [this](UObject* obj, UFunction* fn, void* params) { OnHit(obj, fn, params); return false; });
 }

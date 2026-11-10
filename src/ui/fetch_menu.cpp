@@ -16,7 +16,7 @@ constexpr ULONGLONG kScanEveryMs = 1000;
 constexpr int kZOrder = 70;            // over the HUD's own widgets
 constexpr float kWidth = 480;
 
-struct Line { Text label, value; };
+struct Line { Box row; Text label, value; };
 struct Widgets {
     UClass* hudClass = nullptr;
     UObject* hud = nullptr; int32_t hudIndex = -1;
@@ -24,13 +24,14 @@ struct Widgets {
     bool built = false, ok = false;
     Kit kit;
     Fixed box;
-    std::array<Line, clone::kMenuRows> rows;
+    std::array<Line, clone::kMenuLines> rows;
     std::array<Text, kStatusLines> status;
-    Text hint;
+    Text title, hint;
     Fixed bannerBox;
     Text banner;
     std::string bannerShown;
 } w;
+uint32_t g_builds = 0;   // HudKit: one more each time the widgets are made on a HUD
 
 Text MakeText(Box& column, float size, Rgba color, Margin pad) {
     Text t = w.kit.MakeText();
@@ -44,6 +45,7 @@ Text MakeText(Box& column, float size, Rgba color, Margin pad) {
 
 bool Build() {
     w.built = true;
+    ++g_builds;
     w.kit = Kit(w.hud, Vis::HitTestInvisible);   // keys only: nothing here takes the mouse
     Canvas root = w.kit.Root();
     if (!root) { HSM_LOG("fetch: menu: UI_HUD root is not a CanvasPanel; no menu"); return false; }
@@ -62,11 +64,14 @@ bool Build() {
     Box column = w.kit.MakeColumn();
     back.Content(column).Align(HAlign::Fill, VAlign::Top);
     MakeText(column, 24, kMenuAccentInk, {0, 0, 0, 0}).Set("FETCH");
-    MakeText(column, 13, kMenuDim, {0, 0, 0, 10}).Set("style clones: record how you fight, then fight yourself");
-    for (int r = 0; r < clone::kMenuRows; ++r) {
+    w.title = MakeText(column, 13, kMenuDim, {0, 0, 0, 10});
+    if (!w.title) { HSM_LOG("fetch: menu: could not make the widgets"); return false; }
+    for (int r = 0; r < clone::kMenuLines; ++r) {
         Box row = w.kit.MakeRow();
+        if (!row) { HSM_LOG("fetch: menu: could not make the widgets"); return false; }
         column.Add(row).Align(HAlign::Fill, VAlign::Top).Padding({0, 3, 0, 3});
         Line& l = w.rows[size_t(r)];
+        l.row = row;
         l.label = w.kit.MakeText();
         l.value = w.kit.MakeText();
         if (!l.label || !l.value) { HSM_LOG("fetch: menu: could not make the widgets"); return false; }
@@ -130,23 +135,37 @@ bool Attach() {
 
 bool MenuCanShow() { return Attach(); }
 
+bool HudKit(Kit*& kit, uint32_t& hud) {
+    if (!Attach()) return false;
+    if (!w.built) w.ok = Build();
+    if (!w.ok) return false;
+    kit = &w.kit; hud = g_builds;
+    return true;
+}
+
+bool HudStill(uint32_t hud) { return Attach() && w.built && w.ok && g_builds == hud; }
+
 void MenuTick(bool open, const MenuView& view) {
     if (!open) { if (w.box) w.box.Show(false); return; }
     if (!Attach()) return;
     if (!w.built) w.ok = Build();
     if (!w.ok) return;
     w.box.Show(true);
-    for (int r = 0; r < clone::kMenuRows; ++r) {
-        Line& l = w.rows[size_t(r)];
-        const bool chosen = clone::MenuRow(r) == view.row;
-        l.label.Set(std::string(chosen ? "> " : "   ") + clone::MenuLabel(clone::MenuRow(r)));
-        l.label.Color(chosen ? kMenuAccentInk : kMenuText);
-        const std::string& v = view.values[size_t(r)];
-        l.value.Set(v);
-        l.value.Color(v == "ON" ? kMenuOk : chosen ? kBone : kMenuText);
+    w.title.Set(view.title);
+    for (size_t r = 0; r < w.rows.size(); ++r) {
+        Line& l = w.rows[r];
+        l.row.Show(r < view.lines.size());
+        if (r >= view.lines.size()) continue;
+        const clone::MenuLine& line = view.lines[r];
+        l.label.Set((line.chosen ? "> " : "   ") + line.label);
+        l.label.Color(line.chosen ? kMenuAccentInk : line.on ? kMenuOk : kMenuText);
+        l.value.Set(line.value);
+        l.value.Color(line.on && !view.merge ? kMenuOk : line.chosen ? kBone : kMenuText);
     }
     for (int i = 0; i < kStatusLines; ++i) w.status[size_t(i)].Set(view.status[size_t(i)]);
-    w.hint.Set("W/S or arrows: choose   A/D: change   Enter: do   " + view.key + " or Esc: close");
+    w.hint.Set(view.typing  ? std::string("Type a name   Backspace: erase   Enter: keep it   Esc: leave it")
+               : view.merge ? "W/S or arrows: choose   A/D or Enter: pick   Enter: do   Esc: back   " + view.key + ": close"
+                            : "W/S or arrows: choose   A/D: change   Enter: do   " + view.key + " or Esc: close");
 }
 
 void BannerTick(const std::string& text) {

@@ -18,6 +18,11 @@ class Adapter;
 // empty: none).
 std::wstring CloneFileBase(const std::string& value);
 bool ReadCloneFile(const std::wstring& path, std::vector<uint8_t>& out, size_t maxSize);
+// Clones/<FileStem(name)>, no extension: where the recording of that name (.hsmclone) and its model (.hsmmodel) are.
+std::wstring RecordingBase(const std::string& name);
+// A Name block on the end of a recording, its cut tail first dropped: the name it shows from now on (the last one counts), in
+// every Fetch. False when it is not a recording of this version or cannot be written.
+bool AppendNameBlock(const std::wstring& path, const std::string& name);
 
 class StyleRecorder {
 public:
@@ -30,6 +35,11 @@ public:
     void Tick(Adapter& adapter, ue::UObject* me, ue::UObject* clone, bool fightLevel, bool paused, float dt, const std::string& name);
     // The menu's record switch: off writes what is kept and stops; on starts again (the same file). Game thread.
     void SetOn(bool on);
+    // The menu's Record to: what is kept goes into the file it was going to; the next play goes into the one of the name the next
+    // Tick passes (a new file, or the end of the one there). Game thread.
+    void Retarget();
+    // Writes what is kept so far into the file (a merge is about to read it). Play goes on as it was. Game thread.
+    void Save() { Flush(); }
     bool on() const { return on_; }
     bool live() const { return live_; }               // the last tick kept play
     double seconds() const { return seconds_; }       // play kept since Fetch started
@@ -63,6 +73,7 @@ private:
     std::vector<uint8_t> kit_;
     bool live_ = false;
     double seconds_ = 0;
+    std::vector<std::string> keysSeen_;   // the keys of things other than the fighter logged once each (a few)
     FightWatch watch_{[this](const clone::FightEvent& e) { collector_.Note(e); }, [this] { return live_; }};
     clone::Tally tally_;
     size_t counted_ = 0;             // the collector's pending events tally_ has seen

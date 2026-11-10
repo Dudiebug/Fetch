@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <type_traits>
 #include <windows.h>
 
 namespace fetch {
@@ -39,6 +40,7 @@ void ClonePlayer::Load(const Config& cfg) {
     const bool isModel = use_ == clone::BrainUse::Model;
     if (isModel) modelBrain_ = std::make_unique<clone::ModelBrain>(model_, GetTickCount());
     else replay_ = std::make_unique<clone::Brain>(db_);
+    SetMind(cfg.showMind);
     had_ = 0;
     if (isModel) { for (uint8_t g = 0; g < clone::kWeaponGroups; ++g) if (model_.plays(g) >> g & 1u) had_ |= 1u << g; }
     else {
@@ -61,7 +63,59 @@ void ClonePlayer::Load(const Config& cfg) {
         const double all = std::max(db_.rows(), 1u) / 100.0;
         HSM_LOG("clone: it copies %.0f%% of the recording; left out: %.0f%% walking off a beaten foe, %.0f%% 3 s or more with no input",
                 db_.LeftOutCount(clone::Out::Played) / all, db_.LeftOutCount(clone::Out::WalkOff) / all, db_.LeftOutCount(clone::Out::Idle) / all);
+        const clone::LookScale look = db_.Look(db_.samples() - 1);
+        if (look.guessed) HSM_LOG("clone: the recording keeps no mouse sensitivity (it is from before pre12), but its turns show %.2f%s: its mouse plays at that", look.sens, look.invert ? ", inverted" : "");
+        else if (look.known()) HSM_LOG("clone: its latest play was recorded at mouse sensitivity %.2f%s", look.sens, look.invert ? ", inverted" : "");
+        else HSM_LOG("clone: the recording keeps no mouse sensitivity (it is from before pre12), and its turns do not show it: its mouse plays at yours");
+        HSM_LOG("clone: %zu presses of %zu keys of things the player carried (a mod's, say)", db_.presses().size(), db_.keys().size());
+        keyLogged_.assign(db_.keys().size(), 0);
     }
+}
+
+void ClonePlayer::SetMind(bool on) {
+    mind_ = on;
+    if (modelBrain_) modelBrain_->SetTrace(on);
+    if (replay_) replay_->SetTrace(on);
+}
+
+bool ClonePlayer::Mind(ui::MindView& v) const {
+    if (!fighter_ || !mind_) return false;
+    v = {};
+    char b[48];
+    if (modelBrain_) {
+        const int c = modelBrain_->lastClip();
+        v.model = true;
+        v.seq = modelBrain_->seq();
+        if (v.seq) v.playing = c >= 0 && uint32_t(c) < model_.clips() ? clone::ClipLabel(model_.clip(uint32_t(c))) : std::string("nothing it can play");
+        v.detail = name_ + "'s trained model   " + clone::ClipText(modelBrain_->ClipMs());
+        for (const clone::MoveOdds& o : clone::MergedOdds(model_, modelBrain_->odds(), c)) {
+            std::snprintf(b, sizeof b, "%.0f%%", double(o.p) * 100);
+            v.bars.push_back({o.label, b, o.p, -1, o.picked});
+        }
+        return true;
+    }
+    if (!replay_ || db_.sources().empty()) return false;
+    const clone::LookTrace& t = replay_->lastLook();
+    const uint32_t none = db_.rows();
+    v.seq = t.seq;
+    if (!t.seq) return true;
+    std::string from;
+    if (t.row < none) { v.playing = clone::MoveLabel(db_.row(t.row)); from = util::StripControlChars(db_.source(t.row)); }
+    else v.playing = "turning";
+    v.detail = (from.empty() ? "" : "from " + from + "   ") + clone::ClipText(replay_->ClipMs()) + "   " + clone::ReasonText(t.why);
+    v.foe = clone::MapOf(t.foeMetres, t.foeDeg);
+    v.foeKnown = true;
+    for (const clone::CostBar& c : clone::CostBars(t, none)) {
+        const int colour = clone::SourceColour(db_.SourceOf(c.row));
+        v.dots.push_back({clone::MapOfRow(db_.row(c.row)), colour, c.picked});
+        if (c.cost < 1000) std::snprintf(b, sizeof b, "%.2f", double(c.cost)); else std::snprintf(b, sizeof b, "999+");
+        std::string value = b;
+        if (const char* mark = clone::MarkText(c.mark); *mark) value += std::string("  ") + mark;
+        v.bars.push_back({clone::MoveLabel(db_.row(c.row)), value, c.share, colour, c.picked});
+    }
+    if (db_.sources().size() > 1)
+        for (size_t i = 0; i < db_.sources().size() && i < size_t(clone::kSourceColours); ++i) v.sources.push_back(util::StripControlChars(db_.sources()[i]));
+    return true;
 }
 
 void ClonePlayer::ResetBrain(float yaw) {
@@ -71,6 +125,27 @@ void ClonePlayer::ResetBrain(float yaw) {
 
 void ClonePlayer::LetGo(Adapter& a, UObject* w) {
     for (Action act : input_.ReleaseAll().released) a.FireAction(w, act, false);
+    if (replay_) { replay_->ReleaseKeys(); PlayKeys(a, w, replay_->TakeKeys()); }
+}
+
+// A key of something the player carried: pressed on the same kind of thing the clone carries, if it has one. Never on a fighter.
+void ClonePlayer::PlayKeys(Adapter& a, UObject* w, const std::vector<uint16_t>& keys) {
+    if (keys.empty()) return;
+    const std::vector<UObject*> carried = a.CarriedActors(w);
+    for (uint16_t k : keys) {
+        const clone::Db::Key& key = db_.keys()[k];
+        const bool first = k < keyLogged_.size() && !keyLogged_[k];
+        if (first) keyLogged_[k] = 1;
+        UObject* target = nullptr;
+        for (UObject* c : carried) if (c && !a.IsWillie(c) && ObjectName(reinterpret_cast<UObject*>(ClassOf(c))) == key.cls) { target = c; break; }
+        UFunction* fn = target ? FindFunction(ClassOf(target), key.fn) : nullptr;
+        if (!fn) {
+            if (first) HSM_LOG("clone: the key %s of %s is not played: the clone carries no %s", key.fn.c_str(), key.cls.c_str(), target ? "such function" : "such thing");
+            continue;
+        }
+        Call(target, fn).invoke();
+        if (first) HSM_LOG("clone: plays the key %s of %s, as the recording did", key.fn.c_str(), key.cls.c_str());
+    }
 }
 
 void ClonePlayer::Forget() {
@@ -98,6 +173,7 @@ void ClonePlayer::Spawn(Adapter& a, UObject* me, uint32_t now) {
     fighter_ = w; fighterIndex_ = ObjectIndex(w);
     armAt_ = cloneWeapon_ != clone::kCloneKit ? now + 500 : 0;   // once its own spawn has set up its kit
     ResetBrain(yaw + 180);
+    lookLogged_ = false;
     HSM_LOG("clone: in the fight, 5 m ahead of the player");
 }
 
@@ -143,11 +219,30 @@ void ClonePlayer::Play(Adapter& a, B& brain, game::FightWatch& watch, UObject* m
         float seen[clone::kFeatures];
         clone::Features({&mine, &mv, watch.cover(clone::kMe), forged}, {&theirs, &tv, watch.cover(clone::kFoe), foeForged}, nullptr, brain.yaw(), brain.pitch(),
                         brain.PrevTurn(), brain.PrevLook(), brain.buttons(), brain.guardR(), brain.guardL(), seen);
+        const auto t0 = std::chrono::steady_clock::now();
         brain.Look(seen);
+        // What a look costs, said each half minute: the overlay's trace makes it dearer (docs/HUMAN_TESTING.md).
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        lookMs_ += ms; lookMaxMs_ = std::max(lookMaxMs_, ms); ++looks_;
+        if (!lookLogAt_) lookLogAt_ = now;
+        else if (now - lookLogAt_ >= 30000) {
+            HSM_LOG("clone: %u looks in %.0f s, %.2f ms each on average, %.2f ms at most (the clone-thinking overlay %s)", looks_,
+                    (now - lookLogAt_) / 1000.0, lookMs_ / looks_, lookMaxMs_, mind_ ? "on" : "off");
+            lookMs_ = lookMaxMs_ = 0; looks_ = 0; lookLogAt_ = now;
+        }
     }
     const clone::Output o = brain.Step(dt * 1000.f);
+    if constexpr (std::is_same_v<B, clone::Brain>) PlayKeys(a, w, brain.TakeKeys());
+    // The mouse axes are as the player's hand moved: the game scales them by its sensitivity. Played at the recorder's, the
+    // clone's arm moves as theirs did whatever yours is set to (Drive takes yours back out); not known, at yours.
     float sens = 1.f; bool invert = false;
     a.MouseLook(sens, invert);
+    if (!lookLogged_ && (o.look.known() || o.axes[clone::kTurn] != 0 || o.axes[clone::kLook] != 0)) {
+        lookLogged_ = true;
+        if (o.look.known()) HSM_LOG("clone: its mouse plays at the recorder's sensitivity %.2f%s (yours: %.2f)", o.look.sens, o.look.guessed ? ", read off its turns" : "", sens);
+        else HSM_LOG("clone: its mouse plays at your sensitivity %.2f: the %s keeps none", sens, modelBrain_ ? "model" : "recording");
+    }
+    if (o.look.known()) { sens = o.look.sens; invert = o.look.invert; }
     InputFrame f;
     f.seq = ++seq_; f.clientTimeMs = now; f.buttons = o.buttons; f.controlYaw = o.yaw; f.controlPitch = o.pitch; f.axes = o.axes;
     f.axes[clone::kTurn] = std::clamp(o.axes[clone::kTurn] * sens, -kAxisLimit, kAxisLimit);

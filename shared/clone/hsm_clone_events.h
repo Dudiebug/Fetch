@@ -24,7 +24,8 @@ enum class Ev : uint8_t {
     Clash,        // my weapon met the foe's. hand: mine, part: the foe's hand. a: impulse
     Damage,       // who lost health. part: which (kParts order). a: how much (100 a whole part), b: what is left
     Sever,        // who lost a body part. part: the game's dismemberment bit
-    ParryOn, ParryOff, Thrust, Kick,          // who, hand
+    ParryOn, ParryOff, Thrust, Kick,          // who, hand. ParryOn/Off: the game never sets the flag they come from (Parried is
+                                              // its parry), so they never happen; kept so the Events block stays as it was
     GrabOn,       // who, hand. part: the foe's body part held, or kNoPart for anything else. a: 1 the foe, 0 an object
     GrabOff,      // who, hand
     GrabbedOn, GrabbedOff,                    // who is held by the other
@@ -35,10 +36,20 @@ enum class Ev : uint8_t {
                   // damage. b: PackStrike (the surface it met, how it went, how much of it was a stab)
     Armour,       // what who wears now, when it changes: a is ArmourView::Pack
     Stage,        // a training session's stage starts (who: kMe). part: its number, or kNoPart when the session ends. a, b: hsm_clone_drill.h
+    // In the Later block (Fetch pre12 on):
+    Parried,      // who caught the other's blade on guard: the game's StopThatBlade, called when a blade meets the weapon of a
+                  // fighter guarding who wins the weapon-skill roll and is not falling or out on their feet. part: the hand of the
+                  // blade caught, or kNoPart. a: how fast it came (cm/s). b: how full the parry on it is, 0 to 1 (its Just
+                  // Parried Rate: each catch adds to it, and a full one stops the blade's cut; it fades in a fraction of a second)
 };
 constexpr uint8_t kEvLast = uint8_t(Ev::Death);                                        // the Events block's kinds
 constexpr uint8_t kEvFirstMore = uint8_t(Ev::Strike), kEvLastMore = uint8_t(Ev::Stage);  // the More block's
 inline bool MoreKind(uint8_t kind) { return kind >= kEvFirstMore && kind <= kEvLastMore; }
+// The Later block's kinds, and every kind added after them: a reader passes over a later kind it does not know (ReadEventsPayload),
+// so a new kind joins this block and an older Fetch keeps the rest of it.
+constexpr uint8_t kEvFirstLater = uint8_t(Ev::Parried), kEvLastLater = uint8_t(Ev::Parried);
+inline bool LaterKind(uint8_t kind) { return kind >= kEvFirstLater; }
+enum : uint8_t { kInEvents = 0, kInMore = 1, kInLater = 2 };   // the block an event is read from
 constexpr uint8_t kMe = 0, kFoe = 1;
 constexpr uint8_t kBody = 2, kNoHand = 0xFF, kNoPart = 0xFF;
 constexpr float kDamageMin = 0.5f;           // smaller drops are regeneration noise, not a hit (as shared/record)
@@ -48,9 +59,9 @@ constexpr uint32_t kMaxEvents = 4000000;     // a whole file's worth, far past w
 inline const char* EvName(Ev e) {
     static const char* const names[] = {"?", "Hit", "Clash", "Damage", "Sever", "ParryOn", "ParryOff", "Thrust", "Kick", "GrabOn", "GrabOff",
                                         "GrabbedOn", "GrabbedOff", "PickUp", "Drop", "StuckOn", "StuckOff", "Fall", "GetUp", "Death",
-                                        "Strike", "Armour", "Stage"};
-    static_assert(sizeof(names) / sizeof(names[0]) == kEvLastMore + 1, "one name per event kind");
-    return uint8_t(e) <= kEvLastMore ? names[uint8_t(e)] : "?";
+                                        "Strike", "Armour", "Stage", "Parried"};
+    static_assert(sizeof(names) / sizeof(names[0]) == kEvLastLater + 1, "one name per event kind");
+    return uint8_t(e) <= kEvLastLater ? names[uint8_t(e)] : "?";
 }
 
 // sample: the input sample it came before, counted in its Play block (the block's sample count: after the last one).
@@ -72,10 +83,11 @@ inline StrikeInfo UnpackStrike(float b) {
     return {uint8_t(v & 0xFF), StrikeClass(v >> 8 & 3u), float(v >> 10 & 15u) / 15.f};
 }
 
-// A file's event is checked before it is kept: a shared file is untrusted. more: it is in a More block, which has the kinds
-// added since (an Events block never has them, so that an older Fetch keeps reading it).
-inline bool ValidEvent(const FightEvent& e, uint32_t samples, bool more = false) {
-    if (e.kind < 1 || (more ? !MoreKind(e.kind) : e.kind > kEvLast) || e.who > kFoe || e.sample > samples) return false;
+// A file's event is checked before it is kept: a shared file is untrusted. in: the block it is in. A More block has the kinds
+// added in pre11 and a Later block those added since (an Events block never has them, so that an older Fetch keeps reading it).
+inline bool ValidEvent(const FightEvent& e, uint32_t samples, uint8_t in = kInEvents) {
+    const bool kind = in == kInLater ? e.kind >= kEvFirstLater && e.kind <= kEvLastLater : in == kInMore ? MoreKind(e.kind) : e.kind >= 1 && e.kind <= kEvLast;
+    if (!kind || e.who > kFoe || e.sample > samples) return false;
     if (!std::isfinite(e.a) || !std::isfinite(e.b) || std::fabs(e.a) > 1e9f || std::fabs(e.b) > 1e9f) return false;
     if (e.hand != kNoHand && e.hand > kBody) return false;
     return true;
@@ -171,7 +183,8 @@ private:
 
 // What happened in a stretch of fighting, for the player to see (the Fetch menu).
 struct Tally {
-    uint32_t landed = 0, taken = 0, clashes = 0, parries = 0, thrusts = 0, kicks = 0, grabs = 0, falls = 0, kills = 0, deaths = 0;
+    uint32_t landed = 0, taken = 0, clashes = 0, thrusts = 0, kicks = 0, grabs = 0, falls = 0, kills = 0, deaths = 0;
+    uint32_t parries = 0, parried = 0;   // the foe's blade I caught on guard; mine the foe caught
     uint32_t gaps = 0, bare = 0, beat = 0, held = 0, gapsTaken = 0;   // my strikes by how they went; the foe's that found my gaps
     float dealt = 0, suffered = 0;   // health points, 100 a whole part
     void Count(const FightEvent& e) {
@@ -180,7 +193,7 @@ struct Tally {
             case Ev::Hit: ++(me ? landed : taken); break;
             case Ev::Clash: ++clashes; break;
             case Ev::Damage: (me ? suffered : dealt) += e.a; break;
-            case Ev::ParryOn: if (me) ++parries; break;
+            case Ev::Parried: ++(me ? parries : parried); break;
             case Ev::Thrust: if (me) ++thrusts; break;
             case Ev::Kick: if (me) ++kicks; break;
             case Ev::GrabOn: if (me && e.a > 0) ++grabs; break;
@@ -290,8 +303,9 @@ inline std::vector<uint8_t> EventsPayload(const std::vector<FightEvent>& events)
 }
 
 // false: the block is not well formed, or an event in it is not valid for a Play block of `samples` samples. Then none of it
-// is kept: a file is someone else's, and half a block says nothing reliable.
-inline bool ReadEventsPayload(const uint8_t* d, size_t len, uint32_t samples, std::vector<FightEvent>& out, bool more = false) {
+// is kept: a file is someone else's, and half a block says nothing reliable. in: the block (kInEvents, kInMore, kInLater). A
+// Later block's kinds past the last this Fetch knows are a newer Fetch's: they are passed over, in time order like the rest.
+inline bool ReadEventsPayload(const uint8_t* d, size_t len, uint32_t samples, std::vector<FightEvent>& out, uint8_t in = kInEvents) {
     if (len < 4) return false;
     uint32_t n;
     std::memcpy(&n, d, 4);
@@ -299,10 +313,15 @@ inline bool ReadEventsPayload(const uint8_t* d, size_t len, uint32_t samples, st
     std::vector<FightEvent> got(n);
     if (n) std::memcpy(got.data(), d + 4, size_t(n) * sizeof(FightEvent));
     uint32_t last = 0;
+    size_t kept = 0;
     for (const FightEvent& e : got) {
-        if (!ValidEvent(e, samples, more) || e.sample < last) return false;   // in time order, as the recorder writes them
+        if (e.sample < last || e.sample > samples) return false;   // in time order, as the recorder writes them
         last = e.sample;
+        if (in == kInLater && e.kind > kEvLastLater) continue;
+        if (!ValidEvent(e, samples, in)) return false;
+        got[kept++] = e;
     }
+    got.resize(kept);
     out = std::move(got);
     return true;
 }

@@ -2,7 +2,7 @@
 // whose edges are events, and the contacts between their bodies and weapons. The recorder writes them down; the clone hears its
 // own fight with them. What each fighter wears (read every couple of seconds, an Armour event when it changes), and each
 // blow's Strike: how the game's Deal Complex Damage met the body (skin or armour, how much it hurt), folded over the physics
-// steps of one blow. It reads the game and changes nothing.
+// steps of one blow. Each parry: the game's StopThatBlade, a blade caught on the other's guard. It reads the game and changes nothing.
 #pragma once
 #include "clone/hsm_clone.h"
 #include "clone/hsm_clone_armor.h"
@@ -29,6 +29,8 @@ public:
     void Hook();
     // Fetch.ini strikes=: whether Deal Complex Damage is watched (a script VM hook). Set before the first Hook.
     static void SetStrikes(bool on);
+    // Fetch.ini parries=: whether StopThatBlade is watched (a script VM hook) for Parried events. Set before the first Hook.
+    static void SetParries(bool on);
     static void LevelLoaded();                                // the new level's Blueprint overrides get the strike watch too
     // Every couple of seconds, game thread: what both wear (Adapter::ReadArmour). An Armour event when it changed, and a log line.
     void ReadArmour(Adapter& adapter, ue::UObject* me, ue::UObject* foe);
@@ -64,6 +66,11 @@ private:
         int contacts = 0, ran = 0;
     };
     friend struct StrikeHub;
+    friend struct ParryHub;
+    // One parry: the catches of one fighter's blade on the other's guard, a few ms apart.
+    struct OpenParry { uint8_t caught = 0, hand = clone::kNoPart; float power = 0, rate = 0; double lastMs = 0; int catches = 0; };
+    void Caught(ue::UObject* self, double power);
+    void FlushParries(double olderThanMs);
     void StrikeBefore(ue::ScriptCall& call, double now);
     void StrikeAfter(ue::ScriptCall& call, bool ran, uint8_t surface, double damage, double cut);
     void FlushStrikes(double olderThanMs);
@@ -86,6 +93,8 @@ private:
     struct Asked { ue::UObject* victim = nullptr; ue::UObject* collider = nullptr; uint8_t who = 0, hand = 0, part = 0xFF; float stab = 0; bool ours = false; };
     std::vector<Asked> asked_;
     int strikeLines_ = 0;                                    // strikes logged (the first few of each level, for a tester)
+    std::vector<OpenParry> parries_;
+    int parryLines_ = 0;                                     // parries logged, likewise
 };
 
 }  // namespace hsm::game

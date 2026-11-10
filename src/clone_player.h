@@ -10,6 +10,7 @@
 #include "hsm_drivelean.h"
 #include "hsm_input.h"
 #include "hsm_owner.h"
+#include "ui/clone_overlay.h"
 #include "ue/engine.h"
 #include <cstdint>
 #include <memory>
@@ -25,10 +26,13 @@ struct Config {
     bool duel = true;         // Free Mode's own fighters leave while the clone is in
     hsm::clone::BrainSetting brain = hsm::clone::BrainSetting::Auto;
     int menuKey = 0xBA;       // the menu's key (a virtual-key code, ';'); 0: no menu
+    int mindKey = 0xBB;       // mind_key=: shows or hides the clone-thinking overlay ('='); 0: no key
     bool strikes = true;      // Deal Complex Damage is watched for Strike events (a script VM hook)
+    bool parries = true;      // StopThatBlade is watched for Parried events (likewise)
     uint8_t cloneWeapon = hsm::clone::kCloneKit;   // clone_weapon=: what the clone holds as it comes in (hsm_clone_drill.h)
     uint8_t drill = 0;        // drill=: a training session's kind, 0 full tour, 1 fill gaps
     int drillMinutes = 20;    // drill_minutes=
+    bool showMind = false;    // show_mind=: the overlay that shows the clone thinking (its brain keeps a trace of each look)
 };
 
 class ClonePlayer {
@@ -48,6 +52,9 @@ public:
     void Despawn(hsm::game::Adapter& a);
     void SetDuel(bool on) { duel_ = on; }
     void SetCloneWeapon(uint8_t v) { cloneWeapon_ = v; }
+    // The overlay (game thread): SetMind has the brain keep what each look weighed; Mind says it, false with no clone fighting.
+    void SetMind(bool on);
+    bool Mind(ui::MindView& v) const;
     // "Ana, model, in the fight": what the menu shows.
     std::string Describe() const;
 private:
@@ -56,6 +63,7 @@ private:
     void Spawn(hsm::game::Adapter& a, hsm::ue::UObject* me, uint32_t now);
     void Duel(hsm::game::Adapter& a, hsm::ue::UObject* me, uint32_t now);
     void LetGo(hsm::game::Adapter& a, hsm::ue::UObject* w);
+    void PlayKeys(hsm::game::Adapter& a, hsm::ue::UObject* w, const std::vector<uint16_t>& keys);
     void Forget();
     void ResetBrain(float yaw);
 
@@ -77,6 +85,11 @@ private:
     hsm::LeanFeed lean_;
     uint32_t seq_ = 0, spawnAt_ = 0, duelAt_ = 0;
     bool watching_ = false;
+    bool lookLogged_ = false;          // this fighter's sensitivity, said once
+    bool mind_ = false;                // SetMind
+    double lookMs_ = 0, lookMaxMs_ = 0;   // what the looks since lookLogAt_ took, to say in the log
+    uint32_t looks_ = 0, lookLogAt_ = 0;
+    std::vector<uint8_t> keyLogged_;   // each key of the recording's (Db::keys), said once
 };
 
 }  // namespace fetch
