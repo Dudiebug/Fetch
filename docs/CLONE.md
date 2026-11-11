@@ -232,7 +232,8 @@ the input exactly. For both fighters:
 - **Parried** (pre12 on): who caught the other's blade on guard. The game does this when a blade meets the weapon of a fighter who
   is guarding, wins a roll on their weapon skill, and is not falling or out on their feet: the blade's cut and push are weakened,
   and enough catches in a row stop its cut. The event has the hand of the blade caught, how fast it came, and how full the parry
-  was, from 0 to 1 (1 stopped the cut). Catches a few ms apart are one parry.
+  was, from 0 to 1 (1 stopped the cut). Catches a few ms apart are one parry. Half Sword's update of build 26568321 took this
+  catch out of the game, so on that build there are no Parried events: blades that meet are Clashes ([Half Sword's builds](#half-swords-builds)).
 
 They go in an Events block straight after the Play block they belong to. The file stays version 3: an older Fetch skips the block,
 and this one reads a file without it. A block that is not well formed, or follows no Play block, is skipped alone. Every Play block
@@ -416,6 +417,22 @@ In a lobby the recording holds less than offline:
 - Your foe's left-hand thrusts, kicks, parries and grabs are not seen there.
 - How a blow of yours met the foe (a Strike event) is this machine's estimate. The other player's machine decides what it did.
 - Clones stay offline: no clone joins a lobby, and no training session runs there.
+
+### Half Sword's builds
+
+Fetch runs on Half Sword's Steam builds 24185754 and 26568321 (the latest update), and `Fetch.log` names the one it
+found (`engine: steam-26568321 ...`). Another build is left unmodified, and the log says so. On build 26568321:
+
+- **Chain Attack** is a new key, and it is recorded and played like the others. A Fetch from before pre15 loads such a recording
+  and plays every other key in it; it leaves Chain Attack out.
+- **Guarding** is the game's new combat stance or either hand raised. What a recording keeps as guarding, and what a clone sees
+  of your guard, follow it.
+- **No Parried events**: the game no longer catches a blade on guard. Blades that meet are recorded as Clashes. `Fetch.log` says
+  `clone: parries: this game build has no blade catch ...` once.
+- **Clones start whole.** The game now keeps a fighter's wounds with its kit. A clone starts without the wounds its kit was
+  saved with, and a recording's kit is kept without the game's saved blood and dirt.
+
+Recordings and models are the same files on both builds, and each loads in every Fetch.
 
 ### Shared files
 

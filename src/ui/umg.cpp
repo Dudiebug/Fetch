@@ -442,6 +442,18 @@ Text Kit::MakeText() {
     return t;
 }
 
+bool ProbeFont(Kit& kit, UObject* userWidget) {
+    if (kit.HasFont()) return true;
+    // UI_HUD's TextHurt is Steam build 24185754's; build 26568321 has TextWin and TextWin_1 in its place.
+    for (const char* name : {"TextHurt", "TextWin", "TextWin_1", "TextFreeMode"})
+        if (UObject** t = userWidget ? Field<UObject*>(userWidget, name) : nullptr; t && *t && kit.FontFrom(*t, name)) return true;
+    if (Text probe = kit.MakeText(); probe && kit.FontFrom(probe.get(), "a new TextBlock")) {
+        HSM_LOG("umg: no stock TextBlock font on %s; using a new TextBlock's", userWidget ? ObjectName(userWidget).c_str() : "(none)");
+        return true;
+    }
+    return false;
+}
+
 Box Kit::MakeBox(UClass* cls, Box::Kind kind) { Box b = Made<Box>(Spawn(cls)); b.kind_ = kind; return b; }
 Panel Kit::MakePanel() { return Made<Panel>(Spawn(WidgetClass(kBorderClass))); }
 Blur Kit::MakeBlur() { return Made<Blur>(Spawn(WidgetClass(kBackgroundBlurClass))); }

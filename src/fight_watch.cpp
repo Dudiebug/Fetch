@@ -40,6 +40,7 @@ constexpr size_t kOpenStrikes = 32;
 constexpr const char* kParryFunction = "StopThatBlade";
 constexpr const char* kParryOwner = "fetch-parry";
 constexpr const char* kParryRate = "Just Parried Rate";
+constexpr uint32_t kNoCatchBuild = 26568321;   // from this Steam build on the game has no blade catch
 constexpr double kParryGapMs = 150;      // catches of one blade this close together are one parry
 constexpr int kParryLines = 12;          // parries logged in a level, for a tester
 }  // namespace
@@ -108,7 +109,10 @@ struct ParryHub {
         installed() = true;
         if (!InstallScriptHook()) { HSM_LOG("clone: parries: the script VM hook is not available on this build; no Parried events"); return; }
         const int n = ObserveScript(kParryOwner, kStrikeClass, kParryFunction, Caught);
-        HSM_LOG("clone: parries: watching %s (%d function%s)", kParryFunction, n, n == 1 ? "" : "s");
+        // Steam build 26568321 took the blade catch out of the game: its weapons never roll for one, and nothing calls this
+        // function (it is still there). Blades that meet still record as Clash.
+        if (SteamBuild() >= kNoCatchBuild) HSM_LOG("clone: parries: this game build has no blade catch, so no Parried events (blades that meet record as Clash)");
+        else HSM_LOG("clone: parries: watching %s (%d function%s)", kParryFunction, n, n == 1 ? "" : "s");
     }
     static void Caught(ScriptCall& call) {
         double power = 0;

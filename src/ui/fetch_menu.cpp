@@ -49,7 +49,7 @@ bool Build() {
     w.kit = Kit(w.hud, Vis::HitTestInvisible);   // keys only: nothing here takes the mouse
     Canvas root = w.kit.Root();
     if (!root) { HSM_LOG("fetch: menu: UI_HUD root is not a CanvasPanel; no menu"); return false; }
-    if (UObject** src = Field<UObject*>(w.hud, "TextHurt"); src && *src) w.kit.FontFrom(*src, "UI_HUD.TextHurt");
+    if (!ProbeFont(w.kit, w.hud)) HSM_LOG("fetch: menu: no font could be copied from the game; the menu uses the engine's own");
     w.box = w.kit.MakeFixed();
     w.box.Width(kWidth);
     root.Add(w.box).Anchor({{0.5, 0.5}, {0.5, 0.5}}, {0.5, 0.5}).AutoSize().Z(kZOrder);

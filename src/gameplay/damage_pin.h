@@ -22,7 +22,7 @@ void TickDamagePin(bool active, uint16_t stored, bool host);
 void TickPhysicsPin(const std::array<float, kPinnedPhysics>& forced);
 // This machine's own values, for the host's MatchInfo (-1 where the game instance has none yet).
 std::array<float, kPinnedPhysics> OwnPhysics();
-// A fighter caches its damage rate (Damagr Rste Var) when it spawns, before its Player flag is right. Writes the
+// A fighter caches its damage rate (Damagr Rate Var; Damagr Rste Var before build 26568321) when it spawns, before its Player flag is right. Writes the
 // pinned one now (no-op outside a session); TickDamagePin also rewrites every fighter's twice a second and on a change.
 void RefreshDamageCache(ue::UObject* willie);
 // The game's own damage slider (UI_GameSettings' Slider_DamagePlayer), read from its template once it is loaded;

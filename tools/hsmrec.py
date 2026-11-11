@@ -25,7 +25,7 @@ FIGHTER_FLAGS = {1: "local", 2: "bot", 4: "stand-in"}
 AXES = ["move_fwd", "move_right", "turn_mouse", "look_mouse", "turn_pad", "look_pad", "arm_r", "arm_l", "guard_r", "guard_l"]
 ACTIONS = ["GrabLeft", "GrabRight", "GuardLeft", "GuardRight", "Thrust", "ThrustGamepad", "Jump", "CrouchKey", "CrouchHold",
            "Run", "SwapHands", "ToggleCameraLock", "KeyForward", "KeyBack", "KeyLeft", "KeyRight", "Talk", "RightMouse",
-           "MiddleMouse"]
+           "MiddleMouse", "ChainAttack"]
 NO_HAND = 0xFF
 MAX_CHUNK = 1 << 20
 

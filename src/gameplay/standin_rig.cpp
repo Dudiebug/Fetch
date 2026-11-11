@@ -1054,6 +1054,7 @@ void FighterRig::ApplyGrip(const sync::GripState& g) {
         // The off hand's attach point follows the alt / mordhau flags (Willie_BP.cpp:1831): made again at once.
         Call br(willie_, "Break L Constraint");
         br.set<bool>("Slide", false);
+        if (FindProperty(br.function(), "Destroy Constraint")) br.set<bool>("Destroy Constraint", true);   // build 26568321: false only frees the joint
         br.invoke();
         offJoint_ = nullptr;
         offTryMs_ = -1e18;
@@ -1078,6 +1079,7 @@ void FighterRig::ApplyGrip(const sync::GripState& g) {
         if (!RestoreTwoHandPose()) return;
         Call br(willie_, "Break L Constraint");
         br.set<bool>("Slide", false);
+        if (FindProperty(br.function(), "Destroy Constraint")) br.set<bool>("Destroy Constraint", true);   // build 26568321: false only frees the joint
         br.invoke();
         offJoint_ = nullptr;
         HSM_LOG("rig: %s: off hand released", ObjectName(willie_).c_str());

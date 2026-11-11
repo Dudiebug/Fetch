@@ -57,7 +57,7 @@ constexpr const char* kAxisNames[kAxisCount] = {
 constexpr const char* kActionNames[kActionCount] = {
     "Grab Left", "Grab Right", "Guard Left", "Guard Right", "Thrust", "Thrust Gamepad", "Jump", "Crouch Key",
     "Crouch Hold", "Run", "Swap Hands", "Toggle Camera Lock", "Key Forward", "Key Back", "Key Left", "Key Right",
-    "Talk", "RightMouseButton", "MiddleMouseButton",
+    "Talk", "RightMouseButton", "MiddleMouseButton", "Chain Attack",
 };
 // Simulated body bones (UE mannequin layout used by the Willie skeleton). Missing bones are skipped.
 constexpr const char* kBoneCandidates[] = {
@@ -67,9 +67,15 @@ constexpr const char* kBoneCandidates[] = {
 };
 constexpr const char* kPartHealth[7] = { "Head Health", "Body Upper Health", "Body Lower Health", "Arm_R Health", "Arm_L Health", "Leg_R Health", "Leg_L Health" };
 // VitalsMsg.state bit i is field i (protocol/hsm_owner.h kVitalsState*).
-constexpr const char* kStateBoolFields[] = { "Downed", "Any_Guarding", "R_Guarding", "L_Guarding", "Is Crouched",
+// Steam build 26568321's names, then build 24185754's for the four that were renamed (the misspelt ones are the game's own).
+constexpr const char* kStateBoolFields[] = { "Downed", "Combat Stance", "R Hand Active", "L Hand Active", "Is Crouched??",
                                              "R_Thrusting", "Threatening Stance", "Give Up" };
-static_assert(std::size(kStateBoolFields) == 8, "one name per state bit");
+constexpr const char* kStateBoolFieldsOld[] = { "Downed", "Any_Guarding", "R_Guarding", "L_Guarding", "Is Crouched",
+                                                "R_Thrusting", "Threatening Stance", "Give Up" };
+static_assert(std::size(kStateBoolFields) == 8 && std::size(kStateBoolFieldsOld) == 8, "one name per state bit");
+bool GetStateBool(UObject* willie, size_t i, bool& out) {
+    return GetBool(willie, kStateBoolFields[i], out) || GetBool(willie, kStateBoolFieldsOld[i], out);
+}
 
 // Velocity tracking gains: reach the target over ~tau seconds, with caps so a bad sample cannot fling bodies.
 constexpr double kTau = 0.05, kMaxLinear = 3000.0, kMaxAngularDeg = 1500.0;   // 50 ms: puppets keep up with fast swings
@@ -549,6 +555,7 @@ bool Adapter::SavePassportFrom(UObject* owner, FProperty* src, std::vector<uint8
         HSM_LOG("adapter: passport properties missing or mismatched (%s)", PropertyName(src).c_str()); return false;
     }
     CopyPropertyValue(dst, reinterpret_cast<uint8_t*>(sg) + PropertyOffset(dst), reinterpret_cast<uint8_t*>(owner) + PropertyOffset(src));
+    WholeBody(reinterpret_cast<uint8_t*>(sg) + PropertyOffset(dst), false);   // the copy that is kept goes without the saved blood and dirt
     return SaveToMemory(sg, out);
 }
 
@@ -605,7 +612,38 @@ bool Adapter::CopyPassport(UObject* willie, const SpawnOptions& o, double& heigh
             }
     ApplyBuild(willie, dst, o.bot, o.weight);
     if (bare_) StripEquipment(willie, dst);
+    if (!o.bot && !o.careerBody) WholeBody(reinterpret_cast<uint8_t*>(willie) + PropertyOffset(dst), true);
     return true;
+}
+
+// Steam build 26568321 keeps a fighter's body in its passport: BodyPartConditions and CharacterCondition, which the fighter
+// puts on its limbs and health one second after BeginPlay (Willie_BP.cpp:21784). A passport kept in mid fight carries that
+// fight's wounds, so a fighter spawned from one gets a whole body on its own copy here: every limb at 100, Health 100, no
+// bleeding. Always: the saved blood and dirt (a vertex-paint map) goes, which is large and would be kept in every recording.
+// Build 24185754's passport has neither member, and nothing is done there.
+void Adapter::WholeBody(uint8_t* passport, bool heal) {
+    UObject* st = FindObject(kPassportStruct, "UserDefinedStruct");
+    FProperty* parts = st ? FindPropertyPrefix(st, "BodyPartConditions_") : nullptr;
+    FProperty* cond = st ? FindPropertyPrefix(st, "CharacterCondition_") : nullptr;
+    if (!parts && !cond) return;
+    UObject* partsSt = FindObject("Str_Character_Body_Condition", "UserDefinedStruct");
+    UObject* condSt = FindObject("Str_CharacterCondition", "UserDefinedStruct");
+    const auto put = [&](FProperty* in, FProperty* p, double v) {
+        if (p && PropertyType(p) == "DoubleProperty") std::memcpy(passport + PropertyOffset(in) + PropertyOffset(p), &v, sizeof v);
+    };
+    int limbs = 0;
+    if (heal && parts && partsSt)
+        for (FProperty* p : StructProperties(partsSt)) { put(parts, p, 100.0); ++limbs; }
+    if (cond && condSt) {
+        if (heal) { put(cond, FindPropertyPrefix(condSt, "Health_"), 100.0); put(cond, FindPropertyPrefix(condSt, "Bleeding_"), 0.0); }
+        if (FProperty* paint = FindPropertyPrefix(condSt, "VertexPaint_"); paint && PropertyType(paint) == "MapProperty")
+            ClearPropertyValue(paint, passport + PropertyOffset(cond) + PropertyOffset(paint));
+    }
+    static bool logged = false;
+    if (logged || !heal) return;
+    logged = true;
+    if (!parts || !partsSt || !cond || !condSt) HSM_LOG("adapter: the passport's body condition could not be reset (a game update?); fighters start as their passport says");
+    else HSM_LOG("adapter: fighters start whole (%d limb value(s) reset on the passport copy)", limbs);
 }
 
 // Brawl: empties the maps of the passport's Equipment (armour in slots, weapons in slots, weapons in hands) on the
@@ -919,15 +957,16 @@ UObject* Adapter::SpawnFighter(const SpawnOptions& o) {
         heightLogged_ = true;
         HSM_LOG("adapter: spawned a fighter at height %.2f (scale %.3f)", height, sc);
     }
-    // The career's body as the start body, as the stock spawner sets it (BP_SpawnerPoint_Willies.cpp:144); the fighter's
-    // BeginPlay copies it onto its limbs and health (Willie_BP.cpp:14702-14710), after FinishSpawningActor below.
+    // Steam build 24185754: the career's body as the start body, as the stock spawner sets it (BP_SpawnerPoint_Willies.cpp:144);
+    // the fighter's BeginPlay copies it onto its limbs and health, after FinishSpawningActor below. Build 26568321 has no such
+    // field: there the body is in the passport, and CopyPassport left it alone.
     if (o.careerBody) {
         UObject* gi = GameInstance();
         FProperty* src = gi ? FindProperty(ClassOf(gi), "Player Body Condition") : nullptr;
-        FProperty* dst = FindProperty(ClassOf(w), "Start Body Condition");
+        FProperty* dst = src ? FindProperty(ClassOf(w), "Start Body Condition") : nullptr;
         if (src && dst && PropertySize(src) == PropertySize(dst) && PropertyType(src) == PropertyType(dst))
             CopyPropertyValue(dst, reinterpret_cast<uint8_t*>(w) + PropertyOffset(dst), reinterpret_cast<const uint8_t*>(gi) + PropertyOffset(src));
-        else HSM_LOG("adapter: the career's body could not be carried into the fighter (fields missing or mismatched); it starts whole");
+        else if (src) HSM_LOG("adapter: the career's body could not be carried into the fighter (fields missing or mismatched); it starts whole");
     }
     // A career Brawl or Blossfechten fight: the stock spawner's kit flags, on every fighter as the stock spawner does
     // (session/hsm_career.h CareerSpawnKitFor); the fighter's BeginPlay leaves the weapons off by them.
@@ -1026,8 +1065,10 @@ std::vector<UObject*> Adapter::StuckTargets(UObject* willie) {
 void Adapter::TickLookSensitivity(UObject* willie, float dt) {
     double* sens = willie ? Field<double>(willie, "Look Sensiticity") : nullptr;
     if (!sens) return;
-    bool guarding = false;
-    GetBool(willie, "Any_Guarding", guarding);
+    bool guarding = false, hand = false;   // the stance or a raised hand: what the older build's one flag said
+    GetStateBool(willie, 1, guarding);
+    for (size_t i = 2; i <= 3 && !guarding; ++i)
+        if (GetStateBool(willie, i, hand) && hand) guarding = true;
     const double target = guarding ? 0.25 : 1.0;
     if (!std::isfinite(*sens) || guarding) { *sens = target; return; }
     const double step = std::clamp(double(dt) * 5.0, 0.0, 1.0);
@@ -1393,7 +1434,8 @@ bool Adapter::ReadVitals(UObject* willie, uint8_t entity, VitalsMsg& out) {
         if (GetBool(willie, kDislocatedBoolFields[j], b) && b) out.dislocated |= 1u << j;
     // What other fighters' code reads on this fighter (sync audit items 1, 9, 23, 30; Willie_BP.cpp:400-1310).
     for (size_t i = 0; i < std::size(kStateBoolFields); ++i)
-        if (GetBool(willie, kStateBoolFields[i], b) && b) out.state |= uint8_t(1u << i);
+        if (GetStateBool(willie, i, b) && b) out.state |= uint8_t(1u << i);
+    out.state = clone::GuardState(out.state);
     out.weaponSkill = d("Weapon Skill (Temp)"); out.tonus = d("All Body Tonus"); out.noise = d("Total Noise");
     out.light = d("In Light Meter"); out.exhaustion = d("Exhaustion");
     if (FVector* md = Field<FVector>(willie, "Movement Dislocation")) {
@@ -1415,7 +1457,8 @@ void Adapter::ApplyStandInVitals(UObject* willie, const VitalsMsg& v) {
     put("Exhaustion", v.exhaustion);
     if (FVector* md = Field<FVector>(willie, "Movement Dislocation")) *md = FVector{ v.moveDislocation, 0, 0 };   // read as VSize
     SetBool(willie, "Fallen", (v.flags & 2u) != 0);
-    for (size_t i = 0; i < std::size(kStateBoolFields); ++i) SetBool(willie, kStateBoolFields[i], (v.state >> i) & 1u);
+    for (size_t i = 0; i < std::size(kStateBoolFields); ++i)
+        if (!SetBool(willie, kStateBoolFields[i], (v.state >> i) & 1u)) SetBool(willie, kStateBoolFieldsOld[i], (v.state >> i) & 1u);
 }
 
 // The owner's tonus as the attacker's parry roll is about to read it (ModularWeaponBP:918: Consciousness + All Body
@@ -2240,14 +2283,16 @@ bool Adapter::GiveCrossbow(UObject* willie) {
         if (int32_t* inQuiver = Field<int32_t>(willie, "Bolts in Quiver")) *inQuiver = bolts;
     }
 
-    // Hand it armed: "Event Add Bolt" spawns the bolt on the rails from the quiver above, "Event Load Bolt" seats it
-    // (a zero-delay latent chain) and "String Loaded" is what fire gates on. A step that fails to invoke just leaves
-    // the cocking to the game's own reload UI, which now has the quiver it needs.
+    // Hand it armed: "Event Add Bolt" spawns the bolt on the rails from the quiver above and "String Loaded" is what fire
+    // gates on. On build 24185754 "Event Load Bolt" seats the bolt and is called here. On build 26568321 it takes the bolt
+    // ("Loaded Ammo") and the game calls it itself a second after Add Bolt, so it is left alone. A step that fails to
+    // invoke just leaves the cocking to the game's own reload UI, which now has the quiver it needs.
     bool armed = false;
     if (inHand && bolts > 0) {
         Call add(x, "Event Add Bolt");
+        armed = SetBool(x, "String Loaded", true) && add.invoke();
         Call load(x, "Event Load Bolt");
-        armed = add.invoke() && load.invoke() && SetBool(x, "String Loaded", true);
+        if (armed && load.valid() && !FindProperty(load.function(), "Loaded Ammo")) armed = load.invoke();
     }
     HSM_LOG("adapter: crossbow given to %s: in hand %s, quiver %s, %d bolt(s), %s", ObjectName(willie).c_str(), inHand ? "yes" : "NO",
             quiver && *quiver ? "yes" : "NO", bolts, armed ? "armed" : "not armed");
@@ -2760,6 +2805,9 @@ UObject* Adapter::SpawnBot(int rank, const FVector& at, double yawDeg, int teamI
     Call make(g, "Generate Character");
     make.set<UClass*>("Actor Class", willie).set<uint8_t>("Nationality", 0).set<uint8_t>("Tier", uint8_t(std::clamp(rank, 0, 7)))
         .set<bool>("Is Mercenary", false).set<bool>("Ignore Budget", false);
+    // Faction is new in build 26568321: 1 is the plain arena fighter, whose gear follows Tier. Left at 0 the tier is pinned
+    // to 0 in the Abyss's game mode.
+    if (make.valid() && FindProperty(make.function(), "Faction")) make.set<uint8_t>("Faction", 1);
     UObject* bot = nullptr;
     if (make.invoke()) {
         SpawnOptions o; o.at = at; o.yawDeg = yawDeg; o.teamInt = teamInt; o.brain = true; o.stockBrain = true; o.bot = true;

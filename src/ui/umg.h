@@ -270,6 +270,10 @@ private:
     std::vector<uint8_t> font_;
 };
 
+// Gives the kit the game's typeface from the first stock TextBlock of `userWidget` that has one, whichever Steam build's HUD it
+// is, else from a new TextBlock. False when the kit still has no font.
+bool ProbeFont(Kit& kit, ue::UObject* userWidget);
+
 // Probing the game's own widgets (to copy their look, and to log their structure once).
 std::vector<ue::UObject*> ChildrenOf(ue::UObject* widget);    // a panel's children (a Button's content too), or a user widget's root
 ue::UObject* FindTextBlock(ue::UObject* root, int depth);     // the first TextBlock at or under root, `depth` levels down

@@ -16,7 +16,9 @@ constexpr const char* kPlayer = "Player Damage Rate";
 constexpr const char* kNpc = "NPC Damage Rate";
 // Willie_BP.cpp:1187: the rate Get Damage multiplies by, cached by BeginPlay (:16490) and Apply Gameplay Settings (:7681)
 // from the Player flag, which is only computed 0.1 s after BeginPlay (:13033) or set by the mod after a spawn.
-constexpr const char* kCache = "Damagr Rste Var";
+// The game's own spellings: Steam build 26568321's, then build 24185754's.
+constexpr const char* kCache = "Damagr Rate Var";
+constexpr const char* kCacheOld = "Damagr Rste Var";
 constexpr uint64_t kSliderScanMs = 15000, kSweepMs = 5000;   // a full object scan: spawns refresh their own (RefreshDamageCache)
 
 struct Pin {
@@ -99,6 +101,7 @@ void ReadSlider() {
 // The rate a fighter should be hit at: player-controlled fighters (Player) the player rate, the others the NPC rate.
 void WriteCache(UObject* willie, double player, double npc) {
     double* c = Field<double>(willie, kCache);
+    if (!c) c = Field<double>(willie, kCacheOld);
     bool isPlayer = false;
     if (!c || !GetBool(willie, "Player", isPlayer)) return;
     const double want = isPlayer ? player : npc;

@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include "hsm_owner.h"
+
 namespace hsm::clone {
 
 inline std::wstring FetchMutexName(uint32_t pid) { return L"Local\\Fetch-" + std::to_wstring(pid); }
@@ -23,6 +25,14 @@ inline SteamStep NextSteamStep(bool up, int waitedMs, int waitMs) { return up ? 
 constexpr int kTeamUnknown = -2147483647 - 1;
 inline bool MayBeFoe(bool online, int myTeam, int theirTeam) {
     return !online || myTeam == kTeamUnknown || theirTeam == kTeamUnknown || theirTeam != myTeam;
+}
+
+// A fighter's guard, as the recorder keeps it and a clone reads it (VitalsMsg.state). Steam build 24185754 set the guard flag
+// whenever a hand was raised. Build 26568321 has Combat Stance in its place, which a raised hand alone does not always set (it
+// also wants a grip, the other hand, or a fast swing). So a raised hand counts as guarding on both builds. On the older build
+// this changes nothing.
+inline uint8_t GuardState(uint8_t state) {
+    return (state & (kVitalsStateGuardR | kVitalsStateGuardL)) ? uint8_t(state | kVitalsStateGuarding) : state;
 }
 
 // Menus have no fighters, and neither does the Tavern outside Free Mode.

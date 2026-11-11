@@ -306,3 +306,22 @@ HSMMod 0.8.0-pre44 or newer on both. "HSMMod's log" is HSMMod's own log next to 
 94. Set `menu_key=k` and `mind_key=v` and join a lobby. Expected: `fetch: menu_key=K is also HSMMod's build card key; in a lobby one
     press may do both. Another key in Fetch.ini avoids that`, and the same for `mind_key=V` (HSMMod's voice key). With the default
     keys (`;` and `=`) there is no such line. Set them back afterwards.
+
+### Half Sword build 26568321 (pre15) — PENDING — HUMAN TESTING
+
+On the updated game (Steam build 26568321), `record=1`, a clone of your own. Steps 95 to 101 are on that build; step 102 is on the
+older one (24185754), if you still have it.
+
+95. Start the game. Expected in `Fetch.log`: `engine: steam-26568321 (UE 5.4.4 CL-2980), ...`, no `unsupported build key` line,
+    and `adapter: bound N input events` when a fight starts.
+96. Open the Fetch menu. Expected: it shows as before, with the game's font, and no `fetch: menu: no font could be copied` line.
+97. Fight for two minutes and press Chain Attack now and then. Expected: the recording grows (the menu's status line), and the
+    tally counts your hits as before.
+98. Fight your clone of that recording. Expected: it moves, guards and swings, and now and then chains attacks as you did.
+99. Let blades meet a few times. Expected: the tally counts Clashes, no Parried, and `Fetch.log` has `clone: parries: this game
+    build has no blade catch, so no Parried events (blades that meet record as Clash)` once.
+100. Get wounded in a fight while recording (so the kit is saved with wounds), then fight the clone of that recording. Expected:
+     the clone starts without wounds, and `adapter: fighters start whole (N limb value(s) reset on the passport copy)` in the log.
+101. Play a training session through its higher tiers. Expected: the foes are armed for their tier, not all bare tier-0 fighters.
+102. On build 24185754 (if you still have it): steps 95 to 100 work as in pre14 (`engine: steam-24185754 ...`; Parried events still
+     come); a pre14 Fetch loads a recording made on 26568321 and plays it without Chain Attack.

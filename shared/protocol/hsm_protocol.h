@@ -117,7 +117,9 @@ enum class Axis : uint8_t {
 enum class Action : uint8_t {
     GrabLeft, GrabRight, GuardLeft, GuardRight, Thrust, ThrustGamepad, Jump, CrouchKey, CrouchHold,
     Run, SwapHands, ToggleCameraLock, KeyForward, KeyBack, KeyLeft, KeyRight, Talk,
-    RightMouse, MiddleMouse, Count
+    RightMouse, MiddleMouse,
+    ChainAttack,   // Steam build 26568321's held Chain Attack input. That build has no MiddleMouseButton event; the older one has no Chain Attack
+    Count
 };
 constexpr size_t kAxisCount = static_cast<size_t>(Axis::Count);
 constexpr size_t kActionCount = static_cast<size_t>(Action::Count);

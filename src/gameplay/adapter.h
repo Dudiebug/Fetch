@@ -57,7 +57,7 @@ public:
         bool bot = false;                             // a generated bot (SpawnBot): keeps the generator's build, clamped to 0..1, never forced
         double weight = -1.0, height = -1.0;          // a role's build (match/hsm_roles.h; Riot, Juggernaut): the passport Weight / Height this fighter spawns with, 0..1; negative: none (SetBuild's rules)
         const char* fighterClass = nullptr;           // nullptr = the stock Willie_BP_C; else the actor class to spawn as (match/hsm_fighter_class.h: the Zombies format's bots)
-        bool careerBody = false;                      // the career's Player Body Condition as the start body (the stock spawner's, session/hsm_career.h CareerBodyAtSpawn)
+        bool careerBody = false;                      // keep the career's body (its injuries; session/hsm_career.h CareerBodyAtSpawn). Off: the fighter starts whole
     };
     ue::UObject* SpawnFighter(const SpawnOptions& o);
     void KeepRemoteFighter(ue::UObject* willie, float yawDeg, float pitchDeg);   // per tick on the host
@@ -395,6 +395,7 @@ private:
     bool CopyPassport(ue::UObject* willie, const SpawnOptions& o, double& height);
     void ApplyBuild(ue::UObject* willie, ue::FProperty* passport, bool bot, double roleWeight);
     void StripEquipment(ue::UObject* willie, ue::FProperty* passport);
+    void WholeBody(uint8_t* passport, bool heal);
     bool SavePassportFrom(ue::UObject* owner, ue::FProperty* src, std::vector<uint8_t>& out);
     ue::UObject* MeshOf(ue::UObject* willie);
     ue::UObject* world_ = nullptr;

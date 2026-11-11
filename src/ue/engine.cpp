@@ -18,10 +18,14 @@ struct ScriptVm {
     uintptr_t execAddIntInt;       // UKismetMathLibrary::execAdd_IntInt, checks UFunction::Func's offset
     uintptr_t frameStep;           // FFrame::Step(UObject* Context, RESULT_DECL): evaluates the next bytecode expression
 };
-struct BuildInfo { uint64_t key; const char* label; uintptr_t gobjects, appendString; uint32_t processEventIndex; ScriptVm vm; };
+struct BuildInfo { uint64_t key; uint32_t steam; const char* label; uintptr_t gobjects, appendString; uint32_t processEventIndex; ScriptVm vm; };
 // key = PE TimeDateStamp << 32 | SizeOfImage. Unknown key => mod disables itself.
+// The two builds share every native address here: the newer one changed the game's Blueprints and content only. Code that
+// reads a Blueprint name tries the newer build's name first and the older one's after it.
 constexpr BuildInfo kBuilds[] = {
-    {0x8EFA122909712000ull, "steam-24185754 (UE 5.4.4 CL-2705)", 0x08BFD240, 0x012C1CB0, 0x4D,
+    {0xA54B1DAD09712000ull, 26568321, "steam-26568321 (UE 5.4.4 CL-2980)", 0x08BFD240, 0x012C1CB0, 0x4D,
+     {0x014A4850, 0x014A4950, 0x6C, 0x036AF990, 0x014A4EF0}},
+    {0x8EFA122909712000ull, 24185754, "steam-24185754 (UE 5.4.4 CL-2705)", 0x08BFD240, 0x012C1CB0, 0x4D,
      {0x014A4850, 0x014A4950, 0x6C, 0x036AF990, 0x014A4EF0}},
 };
 // Prologues of the two VM functions in the builds above (MSVC, /GS): checked before the executor is detoured.
@@ -101,6 +105,8 @@ bool Init() {
     HSM_LOG("engine: %s, %d objects, object[0]=%s", g_build->label, g_objects->numElements, n.c_str());
     return first && n.find("CoreUObject") != std::string::npos;
 }
+
+uint32_t SteamBuild() { return g_build ? g_build->steam : 0; }
 
 void* ProcessEventAddress() {
     UObject* o = ObjectAt(0);
