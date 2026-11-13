@@ -24,7 +24,7 @@ constexpr uint32_t kSweepMs = 1000;        // Free Mode's own fighters are taken
 constexpr uint32_t kArmRetryMs = 3000;
 constexpr int kArmTries = 3;
 constexpr uint32_t kSummaryMs = 20000;     // the summary stays on screen this long
-constexpr int kWeaponTier = 4;             // the player's weapon: a soldier's (Generate Weapon clamps a typed weapon to 3..6)
+constexpr int kWeaponTier = 4;             // the player's weapon: a soldier's (inside the 3..6 that Generate Weapon kept a typed weapon to before build 26615445)
 constexpr double kFoeAhead = 500;          // uu: 5 m in front of the player, as the clone comes in
 }  // namespace
 

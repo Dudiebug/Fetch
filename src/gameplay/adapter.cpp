@@ -1039,6 +1039,14 @@ bool Adapter::MouseLook(float& sensitivity, bool& invert) {
     return true;
 }
 
+bool Adapter::SetFighterMouseLook(UObject* willie, float sensitivity, bool invert) {
+    double* sens = willie ? Field<double>(willie, "Mouse Sesitivity") : nullptr;
+    if (!sens) return false;
+    *sens = sensitivity;
+    SetBool(willie, "Inverted?", invert);
+    return true;
+}
+
 // Willie_BP ReceiveTick (Willie_BP.cpp:16513): FInterpTo(Look Sensiticity, Any_Guarding ? 0.25 : 1, dt, Any_Guarding ? 0 : 5);
 // an FInterpTo at speed 0 is the target at once.
 std::vector<UObject*> Adapter::StuckTargets(UObject* willie) {

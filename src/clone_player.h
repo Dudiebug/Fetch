@@ -88,6 +88,7 @@ private:
     uint32_t seq_ = 0, spawnAt_ = 0, duelAt_ = 0;
     bool watching_ = false;
     bool lookLogged_ = false;          // this fighter's sensitivity, said once
+    bool mouseLogged_ = false;   // the fighter's own mouse sensitivity was said (Drive)
     bool mind_ = false;                // SetMind
     double lookMs_ = 0, lookMaxMs_ = 0;   // what the looks since lookLogAt_ took, to say in the log
     uint32_t looks_ = 0, lookLogAt_ = 0;

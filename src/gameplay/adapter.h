@@ -302,7 +302,7 @@ public:
     ue::UObject* SpawnBot(int rank, const ue::FVector& at, double yawDeg, int teamInt, double budget = 0);
     int DropHeldWeapons(ue::UObject* willie);   // real weapons out of both hands, as a dropped weapon leaves; fists stay
     // A weapon of one of the game's seven types (WeaponType 1..7) in the right hand, made by the game's own random generator
-    // (BP_Generator_Weapons_Random: Generate Weapon with that specific type and tier, which it clamps to 3..6) and taken up the
+    // (BP_Generator_Weapons_Random: Generate Weapon with that specific type and tier, which builds before 26615445 clamp to 3..6) and taken up the
     // way a bought weapon is (Set Up Right Hand Weapon with its passport). What the hands held before is destroyed, not
     // dropped. cls: the class it came as. False (logged) when the generator is not loaded or a step failed.
     bool GiveWeapon(ue::UObject* willie, uint8_t type, int tier, std::string* cls = nullptr);
@@ -340,6 +340,9 @@ public:
     size_t BoneCount() const { return bones_.size(); }
     ue::UObject* GameInstance();
     bool MouseLook(float& sensitivity, bool& invert);   // GI_Settings' mouse sensitivity and invert
+    // Build 26568321 scales a fighter's mouse by its own Mouse Sesitivity / Inverted?, set only on local players 0 and 1
+    // (Willie_BP Apply Settings); a spawned fighter never gets it, and its arms do not aim. Gives it these. False: the build has none.
+    bool SetFighterMouseLook(ue::UObject* willie, float sensitivity, bool invert);
     // My own fighter while its tick is blocked (a replica: host physics, a hand-off): Look Sensiticity moved as its tick
     // would. The look axes multiply by it, and it starts at 0 (#137: no mouse look at all on a replica from its spawn).
     void TickLookSensitivity(ue::UObject* willie, float dt);

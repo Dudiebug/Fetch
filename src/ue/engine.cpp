@@ -19,11 +19,12 @@ struct ScriptVm {
     uintptr_t frameStep;           // FFrame::Step(UObject* Context, RESULT_DECL): evaluates the next bytecode expression
 };
 struct BuildInfo { uint64_t key; uint32_t steam; const char* label; uintptr_t gobjects, appendString; uint32_t processEventIndex; ScriptVm vm; };
-// key = PE TimeDateStamp << 32 | SizeOfImage. Unknown key => mod disables itself.
+// key = PE TimeDateStamp << 32 | SizeOfImage. Unknown key => mod disables itself. Steam build 26615445 ships 26568321's exe
+// unchanged (same key) with new Blueprints and content, so the first entry is both.
 // The two builds share every native address here: the newer one changed the game's Blueprints and content only. Code that
 // reads a Blueprint name tries the newer build's name first and the older one's after it.
 constexpr BuildInfo kBuilds[] = {
-    {0xA54B1DAD09712000ull, 26568321, "steam-26568321 (UE 5.4.4 CL-2980)", 0x08BFD240, 0x012C1CB0, 0x4D,
+    {0xA54B1DAD09712000ull, 26568321, "steam-26568321/26615445 (UE 5.4.4 CL-2980)", 0x08BFD240, 0x012C1CB0, 0x4D,
      {0x014A4850, 0x014A4950, 0x6C, 0x036AF990, 0x014A4EF0}},
     {0x8EFA122909712000ull, 24185754, "steam-24185754 (UE 5.4.4 CL-2705)", 0x08BFD240, 0x012C1CB0, 0x4D,
      {0x014A4850, 0x014A4950, 0x6C, 0x036AF990, 0x014A4EF0}},

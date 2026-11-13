@@ -175,7 +175,7 @@ void ClonePlayer::Spawn(Adapter& a, UObject* me, uint32_t now) {
     fighter_ = w; fighterIndex_ = ObjectIndex(w);
     armAt_ = cloneWeapon_ != clone::kCloneKit ? now + 500 : 0;   // once its own spawn has set up its kit
     ResetBrain(yaw + 180);
-    lookLogged_ = false;
+    lookLogged_ = false; mouseLogged_ = false;
     HSM_LOG("clone: in the fight, 5 m ahead of the player");
 }
 
@@ -192,14 +192,22 @@ void ClonePlayer::Drive(Adapter& a, UObject* w, float dt) {
     const game::ClonePress press;
     input_.Target(w);
     InputApplier::Step s = input_.Tick(dt * 1000.f);
-    // The camera lock flips this machine's own setting, the middle mouse button runs a debug damage trace.
+    // The camera lock flips this machine's own setting, the middle mouse button runs a debug damage trace
+    // (build 24185754) or spawns a fighter where the camera looks (26615445).
     auto played = [](Action act) { return act != Action::ToggleCameraLock && act != Action::MiddleMouse; };
     for (Action act : s.released) if (played(act)) a.FireAction(w, act, false);
     for (Action act : s.pressed) if (played(act)) a.FireAction(w, act, true);
     float sens = 1.f; bool invert = false;
-    if (a.MouseLook(sens, invert) && std::fabs(sens) > 0.01f) {
+    const bool divided = a.MouseLook(sens, invert) && std::fabs(sens) > 0.01f;
+    if (divided) {
         s.axes[size_t(Axis::TurnMouse)] /= sens;
         s.axes[size_t(Axis::LookMouse)] /= invert ? -sens : sens;
+    }
+    // The game multiplies the axes back by the fighter's own sensitivity (build 26568321; 24185754 uses GI_Settings').
+    const bool own = a.SetFighterMouseLook(w, divided ? sens : 1.f, divided && invert);
+    if (!mouseLogged_) {
+        mouseLogged_ = true;
+        if (own) HSM_LOG("clone: its fighter's mouse sensitivity is set to %.2f%s, so its arms follow its mouse", divided ? sens : 1.f, divided && invert ? ", inverted" : "");
     }
     lean_.Target(w);
     lean_.Trim(s.axes, s.skip);

@@ -118,7 +118,7 @@ enum class Action : uint8_t {
     GrabLeft, GrabRight, GuardLeft, GuardRight, Thrust, ThrustGamepad, Jump, CrouchKey, CrouchHold,
     Run, SwapHands, ToggleCameraLock, KeyForward, KeyBack, KeyLeft, KeyRight, Talk,
     RightMouse, MiddleMouse,
-    ChainAttack,   // Steam build 26568321's held Chain Attack input. That build has no MiddleMouseButton event; the older one has no Chain Attack
+    ChainAttack,   // Steam build 26568321's held Chain Attack input. That build has no MiddleMouseButton event (26615445 has it again); 24185754 has no Chain Attack
     Count
 };
 constexpr size_t kAxisCount = static_cast<size_t>(Axis::Count);

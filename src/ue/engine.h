@@ -23,7 +23,7 @@ static_assert(sizeof(FTransform) == 0x60, "UE 5.4 FTransform (double, SIMD-align
 
 // Lifecycle ---------------------------------------------------------------
 bool Init();                       // build gate + engine globals; false = unsupported, stay vanilla
-uint32_t SteamBuild();             // the game's Steam build number (24185754, 26568321); 0 before Init
+uint32_t SteamBuild();             // the game's Steam build number (24185754, or 26568321 for 26568321 and 26615445, which share an exe); 0 before Init
 bool SelfTest();                   // reflection layout checks; call once Kismet classes are loaded
 uint64_t BuildKey();               // PE TimeDateStamp << 32 | SizeOfImage
 void* ProcessEventAddress();

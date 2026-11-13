@@ -312,7 +312,7 @@ HSMMod 0.8.0-pre44 or newer on both. "HSMMod's log" is HSMMod's own log next to 
 On the updated game (Steam build 26568321), `record=1`, a clone of your own. Steps 95 to 101 are on that build; step 102 is on the
 older one (24185754), if you still have it.
 
-95. Start the game. Expected in `Fetch.log`: `engine: steam-26568321 (UE 5.4.4 CL-2980), ...`, no `unsupported build key` line,
+95. Start the game. Expected in `Fetch.log`: `engine: steam-26568321/26615445 (UE 5.4.4 CL-2980), ...`, no `unsupported build key` line,
     and `adapter: bound N input events` when a fight starts.
 96. Open the Fetch menu. Expected: it shows as before, with the game's font, and no `fetch: menu: no font could be copied` line.
 97. Fight for two minutes and press Chain Attack now and then. Expected: the recording grows (the menu's status line), and the
@@ -325,3 +325,18 @@ older one (24185754), if you still have it.
 101. Play a training session through its higher tiers. Expected: the foes are armed for their tier, not all bare tier-0 fighters.
 102. On build 24185754 (if you still have it): steps 95 to 100 work as in pre14 (`engine: steam-24185754 ...`; Parried events still
      come); a pre14 Fetch loads a recording made on 26568321 and plays it without Chain Attack.
+103. On build 26568321, fight the clone. Expected: its arms swing and aim as the recorded player's did, and its head turns with its
+     view, not just its body moving. `Fetch.log`: `clone: its fighter's mouse sensitivity is set to <your setting>, so its arms
+     follow its mouse`. Change the game's mouse sensitivity and fight again: the clone's arm moves the same as before.
+
+### Half Sword build 26615445 (pre16) — PENDING — HUMAN TESTING
+
+On the latest game (Steam build 26615445), `record=1`, a clone of your own.
+
+104. Start the game. Expected in `Fetch.log`: `engine: steam-26568321/26615445 (UE 5.4.4 CL-2980), ...`, no `unsupported build
+     key` line, and `adapter: bound N input events` when a fight starts.
+105. Steps 96 to 101 and 103 on this build. Expected: each as written there.
+106. Fight your clone and watch it for a minute. Expected: no fighter appears that you did not spawn (the clone never presses the
+     middle mouse button, which spawns one on this build).
+107. Fight the clone of a recording made on build 26568321, and in a pre15 Fetch fight the clone of one made on this build.
+     Expected: both load and play.

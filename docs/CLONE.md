@@ -420,8 +420,9 @@ In a lobby the recording holds less than offline:
 
 ### Half Sword's builds
 
-Fetch runs on Half Sword's Steam builds 24185754 and 26568321 (the latest update), and `Fetch.log` names the one it
-found (`engine: steam-26568321 ...`). Another build is left unmodified, and the log says so. On build 26568321:
+Fetch runs on Half Sword's Steam builds 24185754, 26568321 and 26615445 (the latest update), and `Fetch.log` names the one
+it found (`engine: steam-26568321/26615445 ...` for the two newest, which share one game exe). Another build is left
+unmodified, and the log says so. On builds 26568321 and 26615445:
 
 - **Chain Attack** is a new key, and it is recorded and played like the others. A Fetch from before pre15 loads such a recording
   and plays every other key in it; it leaves Chain Attack out.
@@ -431,8 +432,13 @@ found (`engine: steam-26568321 ...`). Another build is left unmodified, and the 
   `clone: parries: this game build has no blade catch ...` once.
 - **Clones start whole.** The game now keeps a fighter's wounds with its kit. A clone starts without the wounds its kit was
   saved with, and a recording's kit is kept without the game's saved blood and dirt.
+- **The clone's arms** follow its mouse. The game now keeps a mouse sensitivity on each fighter and sets it only for
+  you, so Fetch gives the clone yours. pre15 left it unset, and the clone's arms did not aim. `Fetch.log` says
+  `clone: its fighter's mouse sensitivity is set to ...` when it fights.
+- **The middle mouse button** is back on build 26615445: it spawns a fighter where you look. A clone never presses it, as on
+  the older builds.
 
-Recordings and models are the same files on both builds, and each loads in every Fetch.
+Recordings and models are the same files on every build, and each loads in every Fetch.
 
 ### Shared files
 
